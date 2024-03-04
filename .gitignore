@@ -2,3 +2,4 @@
 kernel/target/
 utils/__pycache__
 hdd.img
+.idea
