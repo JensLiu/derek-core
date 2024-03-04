@@ -21,8 +21,9 @@ make qemu-gdb
 ```
 And then connect gdb to remote server at port `1234`.
 
-If you want to debug in VSCode, checkout the template in `.vscode/launch.json`.
-
+#### Debugging in IDEs
+- vscode: checkout the template in `.vscode/launch.json`.
+- CLion: checkout this [stackoverflow post](https://stackoverflow.com/questions/55203303/debug-xv6-on-mac-with-clion)
 
 
 # References
