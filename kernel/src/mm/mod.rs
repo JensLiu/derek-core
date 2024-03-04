@@ -1,7 +1,8 @@
 use alloc::sync::Arc;
-use spin::{Once, RwLock};
+use core::arch::asm;
+use spin::RwLock;
 
-use crate::{allocator, info};
+use crate::allocator;
 
 use self::address_space::AddrSpace;
 
@@ -11,37 +12,35 @@ pub mod layout;
 pub mod memory;
 pub mod page_table;
 
-// ther kernel address space can be accessed by multiple cores
-// and heavily read domonated.
+// their kernel address space can be accessed by multiple cores
+// and heavily read dominated.
 
 lazy_static::lazy_static! {
-    pub static ref KERNEL_ADDRESS_SPACE: Arc<RwLock<AddrSpace>> =
-        Arc::new(RwLock::new(AddrSpace::make_kernel()));
+    pub static ref KERNEL_ADDRESS_SPACE: Arc<RwLock<AddrSpace>> = {
+        let kernel_space = AddrSpace::make_kernel();
+        kernel_space.verify();
+        Arc::new(RwLock::new(kernel_space))
+    };
 }
 
-// const KERNEL_ADDRESS_SPACE: Once<Arc<RwLock<AddrSpace>>> = Once::new();
-
 pub fn init() {
-    arithmetics::arithmetics_done_right();
-
     allocator::init();
-
-    page_table::test();
-    info!("page table implementation test done");
-    // initialise the kernel address space
+    // invoke init
+    KERNEL_ADDRESS_SPACE.read();
 }
 
 pub fn hart_init() {
-    // KERNEL_ADDRESS_SPACE.call_once(|| {
-    //     Arc::new(RwLock::new(AddrSpace::make_kernel()))
-    // });
+    // load the kernel page table: this is the first time paging is enabled
+    // try setting a breakpoint here and use `info mem` in QEMU to see what happens
+    KERNEL_ADDRESS_SPACE.read().load();
 
-    // load the kernel page table
-    // this is the first time paging is enabled
-    KERNEL_ADDRESS_SPACE
-        // .get()
-        // .unwrap()
-        .read()
-        .load();
-    // let kernel_space = KERNEL_ADDRESS_SPACE.get();
+    // set `sscratch` to point to the TRAPFRAME in user space
+    // We map each proc's TRAPFRAME to the same address, and makes sure
+    // that each process sees the TRAPFRAME of its own
+    unsafe { asm!("csrw sscratch, {0}", in(reg) layout::TRAPFRAME_USER_VA) }
+    assert_eq!({
+        let sscratch: usize;
+        unsafe { asm!("csrr {0}, sscratch", out(reg) sscratch) };
+        sscratch
+    }, layout::TRAPFRAME_USER_VA);
 }
