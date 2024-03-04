@@ -1,0 +1,19 @@
+[package]
+name = "kernel"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+spin = "0.9.8"
+riscv = "0.11.0"
+lazy_static = { version = "1.4.0" , features = ["spin_no_std"]}
+buddy_system_allocator = "0.6"
+bitflags = "2.4.2"
+
+# build kernel lib to be linked 
+[lib]
+name = "kernel"
+path = "src/lib.rs"
+crate-type = ["staticlib"]

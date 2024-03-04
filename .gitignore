@@ -1,0 +1,4 @@
+/target
+kernel/target/
+utils/__pycache__
+hdd.img

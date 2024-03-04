@@ -1,0 +1,7 @@
+{
+    "editor.hover.above": true,
+    "rust-analyzer.linkedProjects": [
+        "./kernel/Cargo.toml",
+        "./kernel/Cargo.toml"
+    ]
+}
