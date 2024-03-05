@@ -1,3 +1,4 @@
+use crate::mm::layout::CLINT_MTIME_BASE;
 use core::{arch::asm, time::Duration};
 
 pub fn hart_id() -> usize {
@@ -9,7 +10,7 @@ pub fn hart_id() -> usize {
 }
 
 pub fn time() -> Duration {
-    let mtime = crate::clint::CLINT_MTIME_BASE as *mut u64;
+    let mtime = CLINT_MTIME_BASE as *mut u64;
     let time = unsafe { mtime.read_volatile() };
     Duration::from_nanos(time)
 }

@@ -21,8 +21,10 @@ linker_symbols!(
     __heap_size,
     __heap_end,
     __heap_start,
-    __kernel_heap_start,
     __kernel_heap_end,
+    __kernel_heap_start,
+    __kernel_stack_end,
+    __kernel_stack_start,
     __kernel_binary_end,
     __bss_end,
     __bss_start,
@@ -36,6 +38,7 @@ linker_symbols!(
     __text_start,
     __kernel_binary_start
 );
+
 // one beyond the highest possible virtual address.
 // MAXVA is actually one bit less than the max allowed by
 // Sv39, to avoid having to sign-extend virtual addresses
@@ -68,3 +71,26 @@ pub const KERNEL_STACK_SIZE: usize = PAGE_SIZE * 2;
 // each process has its own user stack
 // They are allocated by the `FRAME_ALLOCATOR`
 pub const USER_STACK_SIZE: usize = PAGE_SIZE * 2;
+
+// memory mapped registers
+// qemu puts UART registers here in physical memory.
+pub const UART_BASE: usize = 0x1000_0000;
+pub const UART0: usize = UART_BASE;
+pub const UART_SIZE: usize = PAGE_SIZE;
+
+// virtio mmio interface
+pub const VIRTIO_BASE: usize = 0x1000_1000;
+pub const VIRTIO0: usize = VIRTIO_BASE;
+pub const VIRTIO_SIZE: usize = PAGE_SIZE;
+
+// core local interruptor (CLINT), which contains the timer.
+pub const CLINT_BASE: usize = 0x200_0000;
+pub const CLINT_MTIMECMP_BASE: usize = CLINT_BASE + 0x4000; // mechine-level time compare
+pub const CLINT_MTIME_BASE: usize = CLINT_BASE + 0xbff8;
+pub const CLINT_SIZE: usize = 0x1_0000;
+
+// qemu puts platform-level interrupt controller (PLIC) here.
+pub const PLIC_BASE: usize = 0x0c000000;
+pub const PLIC_PRIORITY: usize = PLIC_BASE + 0x0;
+pub const PLIC_PENDING: usize = PLIC_BASE + 0x1000;
+pub const PLIC_SIZE: usize = 0x40_0000;
