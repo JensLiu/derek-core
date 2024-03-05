@@ -35,7 +35,7 @@ QEMU_DRIVE=hdd.img
 
 all: $(USER_LIB_OUT) $(KERNEL_OUT)
 
-K_AUTOGEN_FILES = $K/syscall/gen.rs
+K_AUTOGEN_FILES = 
 U_AUTOGEN_FILES = $U/usys.S $U/syscall.h
 
 ASSEMBLY_FILES = $K/asm/boot.S \
