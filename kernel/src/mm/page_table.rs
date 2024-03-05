@@ -1,9 +1,10 @@
 use core::slice;
 
-use alloc::{string::String, vec::Vec};
-use bitflags::{bitflags, Flags};
+use alloc::vec::Vec;
+use bitflags::bitflags;
 
-use crate::info;
+#[allow(unused)]
+use crate::{debug, info};
 
 use super::{
     address_space::VirtArea,
@@ -174,6 +175,16 @@ pub struct PageTableGuard {
 }
 
 impl PageTableGuard {
+    pub fn get_root_frame(&self) -> Frame {
+        Frame::from_phys_addr(self.root_node.base_addr)
+    }
+
+    pub fn make_satp(&self) -> usize {
+        let ptr = self.root_node.base_addr.as_usize();
+        const SATP_SV39: usize = 8 << 60;
+        SATP_SV39 | ptr >> 12
+    }
+
     /// `PageTableGuard::allocate` allocates the root node of the page table
     /// From there use `PageTableGuard::map_one_allocate` can allocate its interior node
     pub fn allocate() -> Self {
@@ -186,14 +197,6 @@ impl PageTableGuard {
             root_node,
             node_frames: vec![root_node_frame_guard],
         }
-    }
-
-    /// Translate into the value the hardware understand
-    /// In RISC-V SV39, it should be the value understood by `satp`
-    pub fn as_hw_reg_val(&self) -> usize {
-        let ptr = self.root_node.base_addr.as_usize();
-        const SATP_SV39: usize = 8 << 60;
-        SATP_SV39 | ptr >> 12
     }
 
     /// Interior function to allocate one `PageTableNode` frame
@@ -225,27 +228,27 @@ impl PageTableGuard {
     }
 
     pub fn find_allocate(&mut self, va: VirtAddr) -> &'static mut PageTableEntry {
-        // info!(
+        // debug!(
         //     "PageTableGuard::find_allocate: find PTE for virtaddr: {:?}",
         //     va.as_usize() as *const usize
         // );
         let mut table = unsafe { self.root_node.table() };
 
         for level in (0..=2).rev() {
-            // info!(
+            // debug!(
             //     "----------------------- level-{:?} page table node at: {:?} -----------------------------",
             //     level,
             //     table.as_ptr(),
             // );
             let index = va.pte_index(level);
-            
+
             // info!("index at {:?}", index);
             let pte = table
                 .get_mut(index)
                 .expect("PageTable::map: invalid entry index");
 
             if level == 0 {
-                // info!(
+                // debug!(
                 //     "0-level PTE: bits:{:?} referencing_physaddr: {:?}, flags: {:?}",
                 //     pte.bits,
                 //     pte.referencing_address().as_usize() as *const u32,
@@ -258,7 +261,7 @@ impl PageTableGuard {
                 // for interior nodes, allocate its next-level node
                 // and fill the corresponding PTE
                 let node_pa = self.allocate_node().get_base_phys_addr();
-                // info!(
+                // debug!(
                 //     "Invalid PTE: allocated next-level node as: {:?}",
                 //     node_pa.as_usize() as *const usize
                 // );
@@ -267,7 +270,7 @@ impl PageTableGuard {
                 assert_eq!(pte.flags().bits(), PTEFlags::VALID.bits());
             }
             // else {
-            // info!(
+            // debug!(
             //     "Valid PTE: bits:{:?} referencing_physaddr: {:?}, flags: {:?}",
             //     pte.bits,
             //     pte.referencing_address().as_usize() as *const usize,
@@ -282,7 +285,7 @@ impl PageTableGuard {
         unreachable!()
     }
 
-    pub fn find(&self, va: VirtAddr) -> Option<PageTableEntry> {
+    pub fn find(&self, va: VirtAddr) -> Option<&'static mut PageTableEntry> {
         let mut table = unsafe { self.root_node.table() };
 
         for level in (0..=2).rev() {
@@ -292,7 +295,7 @@ impl PageTableGuard {
                 .expect("PageTable::map: invalid entry index");
 
             if level == 0 {
-                return Some(*pte);
+                return Some(pte);
             }
 
             if !pte.is_valid() {
@@ -306,49 +309,38 @@ impl PageTableGuard {
 
     /// The virtual and physical addresses must be valid
     pub fn map_one(&self, va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Option<()> {
-        let mut table = unsafe { self.root_node.table() };
-        for level in (0..=2).rev() {
-            let index = va.pte_index(level);
-            let pte = table
-                .get_mut(index)
-                .expect("PageTable::map: invalid entry index");
-            if !pte.is_valid() && level != 0 {
-                // if there isn't a path to the leaf node, return
-                return None;
-            }
-            if level == 0 {
-                // assert!(
-                //     !pte.is_valid(),
-                //     "PageTable::map: overwritting original mapping!"
-                // );
-                let flags = flags | PTEFlags::VALID;
-                *pte = PageTableEntry::new(pa, flags);
-                return Some(());
-            }
-            // next-level node as a slice
-            table = unsafe { PageTableNode::from_frame(&pte.referencing_frame()).table() }
-        }
-        unreachable!()
+        let pte = self.find(va)?;
+        let flags = flags | PTEFlags::VALID;
+        assert!(
+            !pte.is_valid(),
+            "PageTable::map: overwritting original mapping!"
+        );
+        *pte = PageTableEntry::new(pa, flags);
+        return Some(());
     }
 
     pub fn map_one_allocate(&mut self, va: VirtAddr, pa: PhysAddr, flags: PTEFlags) {
-        // info!(
+        // debug!(
         //     "PageTableGuard::map_one_allocate: try mapping {:?} -> {:?}",
         //     va.as_usize() as *const usize,
         //     pa.as_usize() as *const usize
         // );
         let pte = self.find_allocate(va);
         let flags = flags | PTEFlags::VALID;
+        assert!(
+            !pte.is_valid(),
+            "PageTable::map: overwritting original mapping!"
+        );
         *pte = PageTableEntry::new(pa, flags);
         assert_eq!(pte.referencing_address(), pa);
         assert_eq!(pte.flags().bits(), flags.bits());
-        // info!(
+        // debug!(
         //     "0-level PTE: bits:{:?} referencing_physaddr: {:?}, flags: {:?}",
         //     pte.bits,
         //     pte.referencing_address().as_usize() as *const u32,
         //     pte.flags()
         // );
-        // info!(
+        // debug!(
         //     "PageTableGuard::mep_one_allocate: mapped {:?} -> {:?}",
         //     va.as_usize() as *const usize,
         //     pa.as_usize() as *const usize
@@ -366,7 +358,7 @@ impl PageTableGuard {
                 assert_eq!(va.as_usize(), pa.as_usize());
                 assert!(va.is_page_aligned());
                 assert!(pa.is_page_aligned());
-                self.map_one_allocate(va, pa, flags)
+                self.map_one_allocate(va, pa, flags);
             }
         } else {
             for (va, virt_frame_guard) in &virt_area.virt_frames {
@@ -394,7 +386,7 @@ impl PageTableGuard {
 }
 
 impl PageTableGuard {
-    pub fn verify_virt_area(&self, virt_area: &VirtArea) {
+    pub fn verify_virt_area_mapping(&self, virt_area: &VirtArea) {
         let flags: PTEFlags = virt_area.permissions().into();
         if virt_area.is_identically_mapped {
             let rng = virt_area.virt_frame_range; // Copied
