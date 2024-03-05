@@ -24,15 +24,19 @@ __kernelvec:
     call kerneltrap # function call preserves the stack pointer
 
     # we restore registers
-    ld x1, 1*8(sp)  # ra
-    ld x2, 2*8(sp)  # sp
-    ld x3, 3*8(sp)  # gp
+    ld ra, 1*8(sp)  # x1
+    ld sp, 2*8(sp)  # x2
+    ld gp, 3*8(sp)  # x3
     # skip tp: x4 because we may move CPU
     .set i, 5
     .rept (31-5)+1
         LOAD_USER_REG %i, i*8(sp)
         .set i, i+1
     .endr
+
+    addi sp, sp, 32*8   # pop stack
+
+    sret # return to whatever we are doing in the kernel
 
 .global __timervec
 .align 4
