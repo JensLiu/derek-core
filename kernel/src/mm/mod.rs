@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use core::arch::asm;
+use riscv::register::{satp, sscratch};
 use spin::RwLock;
 
 use crate::allocator;
@@ -37,10 +37,6 @@ pub fn hart_init() {
     // set `sscratch` to point to the TRAPFRAME in user space
     // We map each proc's TRAPFRAME to the same address, and makes sure
     // that each process sees the TRAPFRAME of its own
-    unsafe { asm!("csrw sscratch, {0}", in(reg) layout::TRAPFRAME_USER_VA) }
-    assert_eq!({
-        let sscratch: usize;
-        unsafe { asm!("csrr {0}, sscratch", out(reg) sscratch) };
-        sscratch
-    }, layout::TRAPFRAME_USER_VA);
+    sscratch::write(layout::TRAPFRAME_USER_VA);
+    assert_eq!(sscratch::read(), layout::TRAPFRAME_USER_VA);
 }

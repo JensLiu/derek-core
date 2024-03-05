@@ -1,14 +1,16 @@
 use crate::arch::hart_id;
-use crate::mm::memory::{Frame, PhysAddr};
-use crate::uart;
 use crate::{clint, info, mm, plic};
+use crate::{println, uart};
 use core::arch::asm;
-use crate::print;
+use riscv::asm::wfi;
 use riscv::register::*;
 
-const SIE_SEIE: usize = 1 << 9; // external
-const SIE_STIE: usize = 1 << 5; // timer
-const SIE_SSIE: usize = 1 << 1; // software
+// external
+const SIE_SEIE: usize = 1 << 9;
+// timer
+const SIE_STIE: usize = 1 << 5;
+// software
+const SIE_SSIE: usize = 1 << 1;
 
 #[no_mangle]
 unsafe extern "C" fn kstart() {
@@ -28,6 +30,7 @@ unsafe extern "C" fn kstart() {
     asm!("csrw medeleg, t0"); // M-mode exception deligate
     asm!("csrw mideleg, t0"); // M-mode interrupt deligate
                               // allow external, timer and software interruption in M-mode
+
     let sie: usize;
     asm!("csrr {}, sie", out(reg) sie);
     asm!("csrw sie, {}", in(reg) sie | SIE_SEIE | SIE_STIE | SIE_SSIE);
@@ -54,36 +57,40 @@ static mut HART0_STARTED: bool = false;
 extern "C" fn kmain() {
     // we are now in supervisor mode
     if hart_id() == 0 {
-        unsafe { uart::init() };
+        uart::init(); // init uart for printing
         info!("booting derek-core on hart {}...", hart_id());
         info!("UART initialised");
-        unsafe { plic::init() };
-        info!("PLIC initialised");
-        plic::hart_init();
-        info!("PLIC initialised");
 
-        mm::init();
-        mm::hart_init();
+        mm::init(); // init allocators and kernel page table
+        mm::hart_init(); // turn on paging
+
+        // process table init
+        // trap vectors init (counter for timer)
+        // install kernel trap vector
+
+        plic::init(); // set up interrupt controller
+        plic::hart_init(); // ask for PLIC for device interrupts
+        info!("PLIC initialised");
 
         unsafe {
             HART0_STARTED = true;
         }
     } else {
         // wait until hart-0 finishes
-        info!("hart {} parked...", hart_id());
         loop {
             if unsafe { HART0_STARTED } {
                 break;
             }
         }
         info!("hart {} booting...", hart_id());
-        plic::hart_init();
-        mm::hart_init();
+
+        plic::hart_init(); // turn
+        mm::hart_init(); // turn on pagning
     }
 
+    // for now, just do nothing...
     loop {
-        unsafe {
-            asm!("wfi");
-        }
+        wfi(); // RISC-V intstruction: wait for interrupt
+        info!("interrupt");
     }
 }

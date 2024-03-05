@@ -1,9 +1,10 @@
+use core::cell::SyncUnsafeCell;
 
-use crate::arch::hart_id;
+use crate::{
+    arch::hart_id,
+    mm::layout::{PLIC_BASE, PLIC_PENDING},
+};
 
-pub const PLIC_BASE: usize = 0xc00_0000;
-pub const PLIC_PRIORITY: usize = PLIC_BASE;
-pub const PLIC_PENDING: usize = PLIC_BASE + 0x1000;
 pub const PLIC_MENABLE_BASE: usize = PLIC_BASE + 0x2000;
 // M-mode enabled
 pub const PLIC_SENABLE_BASE: usize = PLIC_BASE + 0x2080;
@@ -14,31 +15,43 @@ pub const PLIC_SPRIORITY_BASE: usize = PLIC_BASE + 0x201000;
 // S-mode priority
 pub const PLIC_MCLAIM_BASE: usize = PLIC_BASE + 0x200004;
 // M-mode claim
-pub const PLIC_SCLAIM_BASE: usize = PLIC_BASE + 0x201004;       // S-mode claim
+pub const PLIC_SCLAIM_BASE: usize = PLIC_BASE + 0x201004; // S-mode claim
 
 #[inline]
 #[allow(non_snake_case)]
-pub const fn PLIC_MENABLE(hart: usize) -> usize { PLIC_MENABLE_BASE + hart * 0x100 }
+pub const fn PLIC_MENABLE(hart: usize) -> usize {
+    PLIC_MENABLE_BASE + hart * 0x100
+}
 
 #[inline]
 #[allow(non_snake_case)]
-pub const fn PLIC_SENABLE(hart: usize) -> usize { PLIC_SENABLE_BASE + hart * 0x100 }
+pub const fn PLIC_SENABLE(hart: usize) -> usize {
+    PLIC_SENABLE_BASE + hart * 0x100
+}
 
 #[inline]
 #[allow(non_snake_case)]
-pub const fn PLIC_MPRIORITY(hart: usize) -> usize { PLIC_MPRIORITY_BASE + hart * 0x2000 }
+pub const fn PLIC_MPRIORITY(hart: usize) -> usize {
+    PLIC_MPRIORITY_BASE + hart * 0x2000
+}
 
 #[inline]
 #[allow(non_snake_case)]
-pub const fn PLIC_SPRIORITY(hart: usize) -> usize { PLIC_SPRIORITY_BASE + hart * 0x2000 }
+pub const fn PLIC_SPRIORITY(hart: usize) -> usize {
+    PLIC_SPRIORITY_BASE + hart * 0x2000
+}
 
 #[inline]
 #[allow(non_snake_case)]
-pub const fn PLIC_MCLAIM(hart: usize) -> usize { PLIC_MCLAIM_BASE + hart * 0x2000 }
+pub const fn PLIC_MCLAIM(hart: usize) -> usize {
+    PLIC_MCLAIM_BASE + hart * 0x2000
+}
 
 #[inline]
 #[allow(non_snake_case)]
-pub const fn PLIC_SCLAIM(hart: usize) -> usize { PLIC_SCLAIM_BASE + hart * 0x2000 }
+pub const fn PLIC_SCLAIM(hart: usize) -> usize {
+    PLIC_SCLAIM_BASE + hart * 0x2000
+}
 
 pub const URT0_IRQ: u32 = 10;
 pub const VIRTIO0_IRQ: u32 = 1;
@@ -56,7 +69,7 @@ impl Plic {
         let claim_reg = PLIC_SCLAIM(hart_id()) as *const u32;
         let int_id = unsafe { claim_reg.read_volatile() };
         if int_id == 0 {
-            None    // 0 means no interrupt pending
+            None // 0 means no interrupt pending
         } else {
             Some(int_id)
         }
@@ -65,7 +78,7 @@ impl Plic {
     /// complete handling the pending interrupt
     /// by the id got from `next`
     pub fn complete(&self, id: u32) {
-        // NOTE: the memory mapped register can distinguish between read and write operations. 
+        // NOTE: the memory mapped register can distinguish between read and write operations.
         //  read -> claims the interrupt
         //  write -> finishes the interrupt
         let complete_reg = PLIC_SCLAIM(hart_id()) as *mut u32;
@@ -97,13 +110,11 @@ impl Plic {
 
     pub fn enable(&self, id: u32) {
         let enables = PLIC_SENABLE(hart_id()) as *mut u32;
-        // NOTE: the plic_int_enable register is bitset mapped. 
+        // NOTE: the plic_int_enable register is bitset mapped.
         //  thus each bit [0..21] represents the stauts of interrupt
-        let actual_id = 1 << id;    // calculate the id bit
+        let actual_id = 1 << id; // calculate the id bit
         unsafe {
-            enables.write_volatile(
-                enables.read_volatile() | actual_id
-            );
+            enables.write_volatile(enables.read_volatile() | actual_id);
         }
     }
 
@@ -117,29 +128,32 @@ impl Plic {
     /// enable interrupt by setting its priority to non-zero
     pub unsafe fn init(&self, id: u32) {
         let enables = PLIC_BASE as *mut u32;
-        enables.add(id as usize).write_volatile(1);   // write non-zero to enable
+        enables.add(id as usize).write_volatile(1); // write non-zero to enable
     }
 }
 
-/// Driver instance
-static PLIC: spin::Once<Plic> = spin::Once::new();
+// Driver instance
+lazy_static::lazy_static! {
+    pub static ref PLIC: SyncUnsafeCell<Plic> = SyncUnsafeCell::new(Plic::new());
+}
 
 /// init once
-pub unsafe fn init() {
-    PLIC.call_once(|| {
-        let plit = Plic::new();
-        plit.init(URT0_IRQ);
-        plit.init(VIRTIO0_IRQ);
-        plit
-    });
+pub fn init() {
+    unsafe {
+        let plic = &mut *PLIC.get();
+        plic.init(URT0_IRQ);
+        plic.init(VIRTIO0_IRQ);
+    }
 }
 
 // for core specific initialisation
 pub fn hart_init() {
-    let plic = PLIC.get().expect("plic::hart_init: PLIC not initialised!");
-    plic.enable(URT0_IRQ);
-    plic.enable(VIRTIO0_IRQ);
-    plic.set_threshold(0);
-    plic.set_priority(URT0_IRQ, 1);
-    plic.set_priority(VIRTIO0_IRQ, 1);
+    unsafe {
+        let plic = &mut *PLIC.get();
+        plic.enable(URT0_IRQ);
+        plic.enable(VIRTIO0_IRQ);
+        plic.set_threshold(0);
+        plic.set_priority(URT0_IRQ, 1);
+        plic.set_priority(VIRTIO0_IRQ, 1);
+    }
 }

@@ -1,5 +1,5 @@
 use core::fmt::Write;
-use core::option::Option::{self, Some, None};
+use core::option::Option::{self, None, Some};
 use core::result::Result::Ok;
 use lazy_static::lazy_static;
 
@@ -11,13 +11,13 @@ pub const UART_BASE_ADDR: usize = 0x1000_0000;
 // some have different meanings for read vs write.
 // see http://byterunner.com/16550.html
 
-const RHR: usize = 0;   // receive holding register (for input bytes)
-const THR: usize = 0;   // transmit holding register (for output bytes)
-const IER: usize = 1;   // interrupt enable register
-const FCR: usize = 2;   // FIFO control register
-const LCR: usize = 3;   // line control register
-const LSR: usize = 5;                 // line status register
-const LSR_TX_IDLE: u8 = 1 << 5;    // THR can accept another character to send
+const RHR: usize = 0; // receive holding register (for input bytes)
+const THR: usize = 0; // transmit holding register (for output bytes)
+const IER: usize = 1; // interrupt enable register
+const FCR: usize = 2; // FIFO control register
+const LCR: usize = 3; // line control register
+const LSR: usize = 5; // line status register
+const LSR_TX_IDLE: u8 = 1 << 5; // THR can accept another character to send
 
 pub struct Uart {
     base_addr: usize,
@@ -33,7 +33,8 @@ impl Uart {
         if unsafe { ptr.add(LCR).read_volatile() } & 1 == 0 {
             // DR (Data ready) bit set to 0 -> no data
             None
-        } else {    // DR bit 1 -> data
+        } else {
+            // DR bit 1 -> data
             Some(unsafe { ptr.add(RHR).read_volatile() })
         }
     }
@@ -128,6 +129,6 @@ impl Write for Uart {
 lazy_static! {
     pub static ref UART: Mutex<Uart> = Mutex::new(Uart::new(UART_BASE_ADDR));
 }
-pub unsafe fn init() {
+pub fn init() {
     UART.lock().init();
 }

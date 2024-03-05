@@ -8,7 +8,7 @@ use alloc::sync::Arc;
 
 use crate::{
     allocator::frame_allocator::{allocate_one_frame, deallocate_one_frame},
-    impl_address_arithmetics, info,
+    debug, impl_address_arithmetics, info,
 };
 
 use super::{
@@ -80,12 +80,11 @@ impl VirtAddr {
         if level > 2 {
             panic!("VirtualAddress::index");
         }
-        
+
         let vpn = VirtFrame::from_virt_addr(self.clone()).number;
         let shift = level * VA_INDEX_WIDTH;
         let index_mask = (1 << VA_INDEX_WIDTH) - 1;
         (vpn >> shift) & index_mask
-
     }
 
     pub fn offset(&self) -> usize {
@@ -237,7 +236,7 @@ impl Drop for FrameGuard {
         // TODO: How to make sure it is in sync with the page table???
         if let Some(frame) = self.inner.as_mut() {
             // assert!(self.unmapped, "FrameGuard::drop: still mapped by some page tables");
-            info!(
+            debug!(
                 "FrameGuard::drop: phys_addr: {:?}",
                 frame.get_base_phys_addr()
             );
@@ -323,12 +322,12 @@ impl VirtFrameGuard {
             VirtFrameGuard::ExclusivelyAllocated(frame_guard) => {
                 frame_guard.get_frame().get_base_phys_addr().as_usize()
             }
-            VirtFrameGuard::CowShared(frame_guard_arc) => {
-                frame_guard_arc.as_ref().get_frame().get_base_phys_addr().as_usize()
-            },
-            VirtFrameGuard::PhysBorrowed(frame) => {
-                frame.get_base_phys_addr().as_usize()
-            }
+            VirtFrameGuard::CowShared(frame_guard_arc) => frame_guard_arc
+                .as_ref()
+                .get_frame()
+                .get_base_phys_addr()
+                .as_usize(),
+            VirtFrameGuard::PhysBorrowed(frame) => frame.get_base_phys_addr().as_usize(),
         }
     }
 }

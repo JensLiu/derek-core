@@ -1,12 +1,15 @@
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::cell::OnceCell;
+use lazy_static::lazy_static;
 use spin::mutex::Mutex;
 
 use crate::{
-    info,
+    debug, info,
     mm::{
+        arithmetics::PG_ROUND_UP,
         layout::{__heap_size, __heap_start, PAGE_SIZE},
         memory::PhysAddr,
-        arithmetics::PG_ROUND_UP,
     },
 };
 
@@ -56,7 +59,7 @@ impl FrameAllocator {
                         self.page_allocated[i + j] = npages;
                     }
                     let ptr = (self.base_addr + i * size) as *mut u8;
-                    info!("FrameAllocator::allocate: allocated page with pa: {:?}", ptr);
+                    // debug!("FrameAllocator::allocate: allocated page with pa: {:?}", ptr);
                     return ptr;
                 }
                 // if we cannot find this round, we find the next unallocated memory and try again
@@ -76,20 +79,17 @@ impl FrameAllocator {
     }
 }
 
-// static FRAME_ALLOCATOR: spin::Once<spin::Mutex<FrameAllocator>> = spin::Once::new();
-lazy_static::lazy_static! {
+lazy_static! {
     pub static ref FRAME_ALLOCATOR: Mutex<FrameAllocator> = {
-        let n_pages = __heap_size() / PAGE_SIZE; // if it cannot fit inside the kenrel heap, an alloc error will occour
+        let n_pages = __heap_size() / PAGE_SIZE; // if it cannot fit inside the kernel heap, an alloc error will occur
         let allocator = FrameAllocator::new(__heap_start(), n_pages);
-        let mutex: Mutex<FrameAllocator> = Mutex::new(allocator);
-        mutex
+        Mutex::new(allocator)
     };
 }
-
-
 pub fn init() {
+    // invoke init
+    FRAME_ALLOCATOR.lock();
     info!("Frame allocator initialised");
-    // FRAME_ALLOCATOR.get().unwrap(); // just to know that it's initialised
 }
 
 // public interface
@@ -100,7 +100,5 @@ pub fn allocate_one_frame() -> PhysAddr {
 
 pub fn deallocate_one_frame(pa: PhysAddr) {
     let pa = pa.as_usize();
-    FRAME_ALLOCATOR
-        .lock()
-        .deallocate(pa as *mut u8);
+    FRAME_ALLOCATOR.lock().deallocate(pa as *mut u8);
 }
