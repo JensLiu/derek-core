@@ -1,22 +1,23 @@
-#![no_std]  // do not use the rust standard library
+#![no_std] // do not use the rust standard library
 #![feature(panic_info_message)]
 #![feature(format_args_nl)]
 #![feature(sync_unsafe_cell)]
 #![feature(alloc_error_handler)]
 #![feature(custom_test_frameworks)]
 
-#[macro_use]    // allows macros like `vec`
+#[macro_use] // allows macros like `vec`
 extern crate alloc;
 
-pub mod start;
+pub mod allocator;
 pub mod arch;
 pub mod clint;
-pub mod uart;
-pub mod print;
-pub mod symbols;
-pub mod plic;
 pub mod mm;
-pub mod allocator;
+pub mod plic;
+pub mod print;
+pub mod start;
+pub mod symbols;
+pub mod uart;
+pub mod trap;
 
 #[no_mangle]
 extern "C" fn eh_personality() {}
@@ -27,11 +28,11 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     // panic_println!("hart {} aborting: ", arch::hart_id());
     if let Some(p) = info.location() {
         panic_println!(
-			"line {}, file {}: {}",
-			p.line(),
-			p.file(),
-			info.message().unwrap()
-		);
+            "line {}, file {}: {}",
+            p.line(),
+            p.file(),
+            info.message().unwrap()
+        );
     } else {
         panic_println!("no information available.");
     }
