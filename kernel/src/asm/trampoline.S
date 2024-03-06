@@ -107,7 +107,7 @@ __userret:
     mv t6, a0   # use t6: x31 as our base pointer to the TRAPFRAME (a0 is x10!)
     .set i, 2
     .rept (30-2)+1
-        LOAD_USER_REG %i, i*8(a6)
+        LOAD_USER_REG %i, i*8(t6)
         .set i, i+1
     .endr
 
