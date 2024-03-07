@@ -17,6 +17,7 @@ const ENTRY_PER_TABLE: usize = 512;
 
 // This is a managing instance of a page table node
 #[repr(transparent)]
+#[derive(Debug)]
 pub struct PageTableNode {
     base_addr: PhysAddr,
 }
@@ -163,6 +164,7 @@ impl Into<Frame> for PageTableEntry {
 /// The RAII managing instance of the page table
 /// Use smart pointers to track the page table, otherwise
 /// It will be released
+#[derive(Debug)]
 pub struct PageTableGuard {
     /// its root node. Note that a `PageTableNode` instance
     /// only stores its `PhysAddr`, it does not manage any resources
@@ -209,22 +211,8 @@ impl PageTableGuard {
     }
 
     pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
-        let mut table = unsafe { self.root_node.table() };
-        for level in (0..=2).rev() {
-            let index = va.pte_index(level);
-            let pte = table
-                .get(index)
-                .expect("PageTable::translate: invalud entry index");
-            if !pte.is_valid() {
-                return None;
-            }
-            if level == 0 {
-                return Some(pte.referencing_address().with_offset(va.offset()));
-            }
-            // next-level node as a slice
-            table = unsafe { PageTableNode::from_frame(&pte.referencing_frame()).table() };
-        }
-        unreachable!()
+        let pte = self.find(va)?;
+        Some(pte.referencing_address().with_offset(va.offset()))
     }
 
     pub fn find_allocate(&mut self, va: VirtAddr) -> &'static mut PageTableEntry {
@@ -365,7 +353,6 @@ impl PageTableGuard {
                 match virt_frame_guard {
                     VirtFrameGuard::ExclusivelyAllocated(phys_frame_guard) => {
                         let pa = phys_frame_guard.inner_ref().get_base_phys_addr();
-                        assert_eq!(va.as_usize(), pa.as_usize());
                         assert!(va.is_page_aligned());
                         assert!(pa.is_page_aligned());
                         self.map_one_allocate(*va, pa, flags);

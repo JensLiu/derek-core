@@ -1,11 +1,10 @@
-use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::cell::OnceCell;
+
 use lazy_static::lazy_static;
 use spin::mutex::Mutex;
 
 use crate::{
-    debug, info,
+    info,
     mm::{
         arithmetics::PG_ROUND_UP,
         layout::{__heap_size, __heap_start, PAGE_SIZE},

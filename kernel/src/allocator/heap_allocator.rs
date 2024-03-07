@@ -1,5 +1,7 @@
 //! We use buddy alocator here
 
+use core::borrow::Borrow;
+
 use buddy_system_allocator::LockedHeap;
 
 use crate::info;
@@ -44,6 +46,24 @@ pub fn init() {
             start, KERNEL_HEAP_SIZE
         );
     }
+}
+
+pub fn kernel_heap_status() -> (usize, usize, usize) {
+    let allocator = KERNEL_HEAP_ALLOCATOR.borrow().lock();
+    let actual = allocator.stats_alloc_actual();
+    let user = allocator.stats_alloc_user();
+    let total = allocator.stats_total_bytes();
+    (actual, user, total)
+}
+
+pub fn print_kernel_heap_status() {
+    let (actual, _, total) = kernel_heap_status();
+    info!(
+        "---------------- KERNEL HEAP USAGE: {:?}% ---------------",
+        actual * 100 / total,
+    );
+    info!("used: {:?} KB, total: {:?} KB", actual / 1024, total / 1024);
+    info!("-------------------------------------------------------");
 }
 
 #[allow(unused)]

@@ -8,7 +8,7 @@ use alloc::sync::Arc;
 
 use crate::{
     allocator::frame_allocator::{allocate_one_frame, deallocate_one_frame},
-    debug, impl_address_arithmetics, info,
+    debug, impl_address_arithmetics,
 };
 
 use super::{
@@ -174,7 +174,10 @@ impl FrameGuard {
     pub fn allocate_zeroed() -> Self {
         let mut frame: Frame = allocate_one_frame().into();
         frame.zero();
-        Self { inner: Some(frame) }
+        let zelf = Self { inner: Some(frame) };
+        // let pa = frame.get_base_phys_addr().as_usize();
+        // debug!("FrameGuard::allocate_zeroed: frame at pa {:?} allocated", pa as *const usize);
+        zelf
     }
 
     /// start managing the frame
@@ -238,7 +241,7 @@ impl Drop for FrameGuard {
             // assert!(self.unmapped, "FrameGuard::drop: still mapped by some page tables");
             debug!(
                 "FrameGuard::drop: phys_addr: {:?}",
-                frame.get_base_phys_addr()
+                frame.get_base_phys_addr().as_usize() as *const usize,
             );
             deallocate_one_frame(frame.get_base_phys_addr());
             unsafe {
@@ -257,6 +260,10 @@ pub struct VirtFrame {
 }
 
 impl VirtFrame {
+    pub fn from_ppn(ppn: usize) -> Self {
+        Self { number: ppn }
+    }
+
     pub fn from_identical(phys_frame: Frame) -> Self {
         Self {
             number: phys_frame.number,
@@ -296,6 +303,10 @@ impl StepByOne for VirtFrame {
 pub type VirtFrameRange = SimpleRange<VirtFrame>;
 
 impl VirtFrameRange {
+    pub fn empty() -> Self {
+        Self::new(VirtFrame::from_ppn(0), VirtFrame::from_ppn(0))
+    }
+
     /// Shorthand for identically mapped virtual range
     pub fn from_identical(phys_rng: FrameRange) -> Self {
         Self::new(

@@ -1,25 +1,25 @@
-use core::arch::asm;
-
-use alloc::{collections::BTreeMap, vec::Vec};
-use riscv::{
-    asm::{fence, sfence_vma_all},
-    register::satp,
-};
+use alloc::{collections::BTreeMap, string::String, vec::Vec};
+use riscv::{asm::sfence_vma_all, register::satp};
+use virtio_drivers::PAGE_SIZE;
 
 use crate::{
     debug, info,
-    mm::layout::{
-        __bss_end, __bss_start, __data_end, __data_start, __heap_end, __heap_start,
-        __kernel_binary_end, __kernel_heap_start, __kernel_stack_end, __kernel_stack_start,
-        __rodata_end, __rodata_start, __text_end, __text_start, __trampoline_start, MAX_VA,
-        PAGE_SIZE, TRAMPOLINE_VA,
+    mm::{
+        layout::{
+            __bss_end, __bss_start, __data_end, __data_start, __heap_end, __heap_start,
+            __kernel_stack_end, __kernel_stack_start, __rodata_end, __rodata_start, __text_end,
+            __text_start, __trampoline_start, MAX_VA, TRAMPOLINE_BASE_VA, TRAPFRAME_BASE_USER_VA,
+            TRAPFRAME_SIZE,
+        },
+        memory::FrameGuard,
     },
+    process::process::init_code_bytes,
 };
 
 use super::{
     layout::{
-        __kernel_heap_end, CLINT_BASE, CLINT_SIZE, PLIC_BASE, PLIC_SIZE, UART_BASE, UART_SIZE,
-        VIRTIO0, VIRTIO_BASE, VIRTIO_SIZE,
+        CLINT_BASE, CLINT_SIZE, PLIC_BASE, PLIC_SIZE, TEXT_BASE_USER_VA, UART_BASE, UART_SIZE,
+        VIRTIO_BASE, VIRTIO_SIZE,
     },
     memory::{Frame, FrameRange, PhysAddr, VirtAddr, VirtFrameGuard, VirtFrameRange},
     page_table::{PageFlags, PageTableGuard},
@@ -29,21 +29,23 @@ use super::{
 // an abstraction of a logical address space it owns
 // (1) a `PageTable` with its `node_frames`
 // (2) Its`VirtArea`s with their underlying `data_frames`
+#[derive(Debug)]
 pub struct AddrSpace {
     page_table: PageTableGuard,
     virt_areas: Vec<VirtArea>,
 }
 
 impl AddrSpace {
+    /// load address space directly
+    /// execution may be corrupted if not careful!
     pub fn load(&self) {
-        let ptr = self.page_table.make_satp();
+        // let ptr = self.page_table.make_satp();
         unsafe {
-            satp::write(ptr);
-            asm!("sfence.vma"); // memory fence to flush TLB
+            // satp::write(ptr);
+            satp::set(satp::Mode::Sv39, 0, self.page_table.get_root_frame().number);
+            // asm!("sfence.vma"); // memory fence to flush TLB
+            sfence_vma_all();
         };
-        // let pa = self.page_table.get_root_frame().get_base_phys_addr().as_ptr::<usize>();
-        let access_time = crate::arch::time();
-        // debug!("page table loaded: {:?}", ptr as *const usize);
         // these are pretty much a wrapper function to the underlying RISC-V instructions
     }
 
@@ -53,29 +55,43 @@ impl AddrSpace {
             self.page_table.verify_virt_area_mapping(virt_area);
         }
     }
+
+    pub fn make_satp(&self) -> usize {
+        self.page_table.make_satp()
+    }
+
+    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
+        self.page_table.translate(va)
+    }
 }
 
 // Create address spaces
 impl AddrSpace {
+    // pub fn make_empty() -> Self {
+    //     let zelf = Self {
+    //         page_table: PageTableGuard::allocate(),
+    //         virt_areas: Vec::new(),
+    //     };
+    //     let pa = zelf
+    //         .page_table
+    //         .get_root_frame()
+    //         .get_base_phys_addr()
+    //         .as_usize();
+    //     debug!(
+    //         "AddrSpace::make_empty: an empty address space allocated at {:?} as a placeholder, \
+    //         it will be dropped later",
+    //         pa as *const usize
+    //     );
+    //     zelf
+    // }
     pub fn make_kernel() -> Self {
+        debug!("AddrSpace::make_kernel: making address space for the kernel");
         let mut virt_areas: Vec<VirtArea> = Vec::new();
         // Trampoline page
         virt_areas.push({
-            let va_begin = VirtAddr::new(TRAMPOLINE_VA);
-            let va_end = VirtAddr::new(MAX_VA);
-            let perms = PageFlags::READABLE | PageFlags::EXECUTABLE;
-            // debug!(
-            //     "trampoline: \t {:?} -- {:?},\t {:?},\t {:?}",
-            //     va_begin.as_usize() as *const usize,
-            //     va_end.as_usize() as *const usize,
-            //     va_end - va_begin,
-            //     perms,
-            // );
-            let mut virt_area = VirtArea::new(va_begin, va_end, perms);
-            let phys_frame = Frame::from_phys_addr(PhysAddr::new(__trampoline_start()));
-            virt_area.track_frame(va_begin, VirtFrameGuard::PhysBorrowed(phys_frame));
-
-            virt_area
+            let area = VirtArea::make_trampoline();
+            area.print_info();
+            area
         });
 
         // Identically mapped physical memory
@@ -86,14 +102,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(__heap_start());
             let pa_end = PhysAddr::new(__heap_end());
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            // debug!(
-            //     "kernel heap:\t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name("heap");
+            area.print_info();
+            area
         });
 
         // kernel boot stack
@@ -101,14 +113,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(__kernel_stack_start());
             let pa_end = PhysAddr::new(__kernel_stack_end());
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            // debug!(
-            //     "kernel stack:\t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name("kernel boot stack");
+            area.print_info();
+            area
         });
 
         // bss: readable, writable
@@ -116,14 +124,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(__bss_start());
             let pa_end = PhysAddr::new(__bss_end());
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            // debug!(
-            //     ".bss: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name(".bss (+kernel heap)");
+            area.print_info();
+            area
         });
 
         // data: readable, writable
@@ -131,14 +135,11 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(__data_start());
             let pa_end = PhysAddr::new(__data_end());
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            // debug!(
-            //     ".data: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name(".data");
+            area.print_info();
+            area
         });
 
         // rodata: readable
@@ -146,14 +147,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(__rodata_start());
             let pa_end = PhysAddr::new(__rodata_end());
             let perms = PageFlags::READABLE;
-            // debug!(
-            //     ".rodata: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name(".rodata");
+            area.print_info();
+            area
         });
 
         // text: readable, executable
@@ -161,14 +158,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(__text_start());
             let pa_end = PhysAddr::new(__text_end());
             let perms = PageFlags::READABLE | PageFlags::EXECUTABLE;
-            // debug!(
-            //     ".text: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name(".text");
+            area.print_info();
+            area
         });
 
         // map memory-mapped registers
@@ -177,14 +170,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(VIRTIO_BASE);
             let pa_end = PhysAddr::new(VIRTIO_BASE + VIRTIO_SIZE);
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            // debug!(
-            //     "virtio: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name("virtio");
+            area.print_info();
+            area
         });
 
         // uart
@@ -192,14 +181,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(UART_BASE);
             let pa_end = PhysAddr::new(UART_BASE + UART_SIZE);
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            // debug!(
-            //     "uart: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name("uart");
+            area.print_info();
+            area
         });
 
         // plic
@@ -207,14 +192,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(PLIC_BASE);
             let pa_end = PhysAddr::new(PLIC_BASE + PLIC_SIZE);
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            // debug!(
-            //     "plic: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-            //     pa_begin.as_usize() as *const usize,
-            //     pa_end.as_usize() as *const usize,
-            //     pa_end - pa_begin,
-            //     perms,
-            // );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name("plic");
+            area.print_info();
+            area
         });
 
         // clint
@@ -222,14 +203,10 @@ impl AddrSpace {
             let pa_begin = PhysAddr::new(CLINT_BASE);
             let pa_end = PhysAddr::new(CLINT_BASE + CLINT_SIZE);
             let perms = PageFlags::READABLE | PageFlags::WRITABLE;
-            debug!(
-                "clint: \t {:?} -- {:?}, \t {:?}, \t {:?}",
-                pa_begin.as_usize() as *const usize,
-                pa_end.as_usize() as *const usize,
-                pa_end - pa_begin,
-                perms,
-            );
-            VirtArea::identically_mapped(pa_begin, pa_end, perms)
+            let mut area = VirtArea::identically_mapped(pa_begin, pa_end, perms);
+            area.set_name("clint");
+            area.print_info();
+            area
         });
 
         let mut page_table = PageTableGuard::allocate();
@@ -242,6 +219,86 @@ impl AddrSpace {
             page_table,
             virt_areas,
         }
+    }
+
+    pub fn make_init() -> Self {
+        debug!("AddrSpace::make_init: making address space for the init process");
+        let init_text = init_code_bytes(); // it is in the kernel binary
+        let mut virt_areas = Vec::new();
+
+        let text_va_begin = VirtAddr::new(TEXT_BASE_USER_VA);
+        let text_va_end = (text_va_begin + init_text.len()).align_up();
+        let user_stack_va = text_va_end + PAGE_SIZE;
+
+        // trampoline
+        virt_areas.push({
+            let area = VirtArea::make_trampoline();
+            area.print_info();
+            area
+        });
+
+        // We skip mapping the trapframe to simplify the API
+        // it should be allocated in `init_trapframe` to make things more clear
+        info!("AddrSpace::make_init: skipping trapframe, remember to call AddrSpace::init_trapframe if you don't see it");
+
+        // user stack
+        virt_areas.push({
+            let area = VirtArea::make_initial_user_stack(user_stack_va);
+            area.print_info();
+            area
+        });
+
+        //text
+        virt_areas.push({
+            let va_begin = text_va_begin;
+            let va_end = text_va_end;
+            let pa_start = PhysAddr::new(init_text.as_ptr() as usize);
+            let perms = PageFlags::READABLE | PageFlags::EXECUTABLE;
+
+            let mut virt_area = VirtArea::new(va_begin, va_end, perms);
+            // Note: the init code is compiled into the kernel binary, so we do not own it
+            let phys_frame = Frame::from_phys_addr(pa_start);
+            virt_area.track_frame(va_begin, VirtFrameGuard::PhysBorrowed(phys_frame));
+            virt_area.set_name(".text");
+            virt_area.print_info();
+            virt_area
+        });
+
+        let mut page_table = PageTableGuard::allocate();
+
+        for virt_area in &virt_areas {
+            page_table.map_virt_area_allocate(virt_area);
+        }
+
+        Self {
+            page_table,
+            virt_areas,
+        }
+    }
+
+    /// Don't forget to call it to allocate a trapframe!!
+    /// User address space need it!!! (not the kernel though)
+    pub fn init_trapframe(&mut self) -> PhysAddr {
+        info!("AddrSpace::init_trapframe: initialising trapframe, you should see this when allocating for user-spaces");
+        let (area, pa) = VirtArea::make_trapframe();
+        area.print_info();
+        self.page_table.map_virt_area_allocate(&area);
+        self.virt_areas.push(area);
+        pa
+    }
+}
+
+impl Drop for AddrSpace {
+    fn drop(&mut self) {
+        let pa = self
+            .page_table
+            .get_root_frame()
+            .get_base_phys_addr()
+            .as_usize();
+        debug!(
+            "AddrSpace::drop: address space with page table at pa {:?} deallocated",
+            pa as *const usize
+        );
     }
 }
 
@@ -268,6 +325,9 @@ pub struct VirtArea {
 
     // TODO: maybe use an enum?
     pub is_identically_mapped: bool,
+
+    // debug
+    pub name: String,
 }
 
 // ExclusivelyAllocated ----- COW Read -----> CowShared
@@ -284,6 +344,7 @@ impl VirtArea {
             virt_frames: BTreeMap::new(),
             permissions: perms,
             is_identically_mapped: false,
+            name: "".into(),
         }
     }
 
@@ -320,7 +381,49 @@ impl VirtArea {
             virt_frames: BTreeMap::new(),
             permissions: perms,
             is_identically_mapped: true,
+            name: "".into(),
         }
+    }
+
+    pub fn make_trampoline() -> Self {
+        let va_begin = VirtAddr::new(TRAMPOLINE_BASE_VA);
+        let va_end = VirtAddr::new(MAX_VA);
+        let perms = PageFlags::READABLE | PageFlags::EXECUTABLE;
+        let mut virt_area = VirtArea::new(va_begin, va_end, perms);
+
+        // Note: the trampoline is not owned by anyone, it is inside the kernel binary
+        let phys_frame = Frame::from_phys_addr(PhysAddr::new(__trampoline_start()));
+        virt_area.track_frame(va_begin, VirtFrameGuard::PhysBorrowed(phys_frame));
+        virt_area.set_name("trampoline");
+        virt_area
+    }
+
+    pub fn make_trapframe() -> (Self, PhysAddr) {
+        let va_begin = VirtAddr::new(TRAPFRAME_BASE_USER_VA);
+        let va_end = VirtAddr::new(TRAPFRAME_BASE_USER_VA + TRAPFRAME_SIZE).align_up();
+        let perms = PageFlags::READABLE | PageFlags::WRITABLE;
+        let mut virt_area = VirtArea::new(va_begin, va_end, perms);
+
+        // Note: the trapframe is allocated specifically for the process, and should
+        // be managed by the user address space
+        let phys_frame = FrameGuard::allocate_zeroed();
+        let pa = phys_frame.get_frame().get_base_phys_addr();
+        virt_area.track_frame(va_begin, VirtFrameGuard::ExclusivelyAllocated(phys_frame));
+        virt_area.set_name("trapframe");
+        (virt_area, pa)
+    }
+
+    pub fn make_initial_user_stack(user_stack_va: VirtAddr) -> Self {
+        let va_begin = user_stack_va;
+        let va_end = user_stack_va + PAGE_SIZE;
+        let perms = PageFlags::READABLE | PageFlags::WRITABLE;
+        let mut virt_area = VirtArea::new(va_begin, va_end, perms);
+
+        // We own the user stack since we explicitly called for its allocation
+        let phys_frame = FrameGuard::allocate_zeroed();
+        virt_area.track_frame(va_begin, VirtFrameGuard::ExclusivelyAllocated(phys_frame));
+        virt_area.set_name("user stack");
+        virt_area
     }
 
     pub fn permissions(&self) -> PageFlags {
@@ -343,5 +446,21 @@ impl VirtArea {
 
     pub fn get_virt_frames(&mut self) -> &mut BTreeMap<VirtAddr, VirtFrameGuard> {
         &mut self.virt_frames
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.into();
+    }
+
+    pub fn print_info(&self) {
+        let va_begin = self.virt_frame_range.get_begin().get_base_virt_addr();
+        let va_end = self.virt_frame_range.get_end().get_base_virt_addr();
+        info!(
+            "\t{:13?}{:13?}\t{:?}\t{:?}",
+            va_end.as_usize() as *const usize,
+            va_begin.as_usize() as *const usize,
+            self.permissions,
+            self.name,
+        );
     }
 }

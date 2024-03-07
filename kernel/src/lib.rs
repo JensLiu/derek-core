@@ -4,6 +4,7 @@
 #![feature(sync_unsafe_cell)]
 #![feature(alloc_error_handler)]
 #![feature(custom_test_frameworks)]
+#![feature(map_try_insert)]
 
 #[macro_use] // allows macros like `vec`
 extern crate alloc;
@@ -11,13 +12,16 @@ extern crate alloc;
 pub mod allocator;
 pub mod arch;
 pub mod clint;
+pub mod cpu;
+pub mod fs;
 pub mod mm;
 pub mod plic;
 pub mod print;
+pub mod process;
 pub mod start;
 pub mod symbols;
-pub mod uart;
 pub mod trap;
+pub mod uart;
 
 #[no_mangle]
 extern "C" fn eh_personality() {}

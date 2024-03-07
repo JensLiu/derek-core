@@ -1,6 +1,4 @@
 use core::fmt::Write;
-use core::option::Option::{self, None, Some};
-use core::result::Result::Ok;
 use lazy_static::lazy_static;
 
 use spin::Mutex;

@@ -44,8 +44,9 @@ linker_symbols!(
 // Sv39, to avoid having to sign-extend virtual addresses
 // that have the high bit set.
 pub const MAX_VA: usize = 1 << (9 + 9 + 9 + 12 - 1);
-pub const TRAMPOLINE_VA: usize = MAX_VA - PAGE_SIZE;
-pub const TRAPFRAME_USER_VA: usize = 1;
+
+// ------------------------------- kernel space layout -------------------------------
+pub const TRAMPOLINE_BASE_VA: usize = MAX_VA - PAGE_SIZE;
 
 // 4KB per page
 pub const PAGE_ORDER: usize = 12;
@@ -94,3 +95,9 @@ pub const PLIC_BASE: usize = 0x0c000000;
 pub const PLIC_PRIORITY: usize = PLIC_BASE + 0x0;
 pub const PLIC_PENDING: usize = PLIC_BASE + 0x1000;
 pub const PLIC_SIZE: usize = 0x40_0000;
+
+// ------------------------------- user space layout -------------------------------
+// they share the same trampoline mapping
+pub const TRAPFRAME_BASE_USER_VA: usize = TRAMPOLINE_BASE_VA - 2 * PAGE_SIZE;
+pub const TRAPFRAME_SIZE: usize = PAGE_SIZE; // even though it cannot span that much
+pub const TEXT_BASE_USER_VA: usize = 0x1_0000;

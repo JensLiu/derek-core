@@ -1,7 +1,7 @@
 use crate::mm::layout::{CLINT_MTIMECMP_BASE, CLINT_MTIME_BASE};
 use crate::{
     arch::hart_id,
-    symbols::{__timervec, NCPUS, SCHEDULER_INTERVAL},
+    symbols::{__timervec, N_CPUS, SCHEDULER_INTERVAL},
 };
 use riscv::register::*;
 
@@ -29,12 +29,12 @@ struct TimerScratch {
 
 // We allocate a `TimerScratch` for each CPU
 // TODO: don't use static, other options?
-static mut TIMER_SCRATCHES: [TimerScratch; NCPUS] = [TimerScratch {
+static mut TIMER_SCRATCHES: [TimerScratch; N_CPUS] = [TimerScratch {
     tmp_regs: [0; 3],
     mtime_addr: 0,
     mtimecmp_addr: 0,
     interval: 0,
-}; NCPUS];
+}; N_CPUS];
 
 pub unsafe fn timer_init() {
     let id = hart_id();

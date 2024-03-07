@@ -1,8 +1,9 @@
+use crate::allocator::heap_allocator;
 use crate::arch::hart_id;
-use crate::{clint, info, mm, plic};
-use crate::{println, uart};
+use crate::trap::usertrapret;
+use crate::uart;
+use crate::{clint, info, mm, plic, process, trap};
 use core::arch::asm;
-use riscv::asm::wfi;
 use riscv::register::*;
 
 // external
@@ -29,7 +30,8 @@ unsafe extern "C" fn kstart() {
     asm!("li t0, 0xffff"); // all-ones: all interruptions
     asm!("csrw medeleg, t0"); // M-mode exception deligate
     asm!("csrw mideleg, t0"); // M-mode interrupt deligate
-                              // allow external, timer and software interruption in M-mode
+
+    // allow external, timer and software interruption in M-mode
 
     let sie: usize;
     asm!("csrr {}, sie", out(reg) sie);
@@ -67,10 +69,14 @@ extern "C" fn kmain() {
         // process table init
         // trap vectors init (counter for timer)
         // install kernel trap vector
+        trap::init_hart();
 
         plic::init(); // set up interrupt controller
         plic::hart_init(); // ask for PLIC for device interrupts
         info!("PLIC initialised");
+
+        process::init();
+        heap_allocator::print_kernel_heap_status();
 
         unsafe {
             HART0_STARTED = true;
@@ -84,13 +90,17 @@ extern "C" fn kmain() {
         }
         info!("hart {} booting...", hart_id());
 
-        plic::hart_init(); // turn
         mm::hart_init(); // turn on pagning
+
+        trap::init_hart();
+        plic::hart_init(); // turn
     }
 
     // for now, just do nothing...
-    loop {
-        wfi(); // RISC-V intstruction: wait for interrupt
-        info!("interrupt");
-    }
+    // unsafe { sstatus::set_sie() }; // enable interrupt to see what happens
+    // loop {
+    //     wfi(); // RISC-V intstruction: wait for interrupt
+    //     info!("wait loop interrupt");
+    // }
+    usertrapret();
 }
