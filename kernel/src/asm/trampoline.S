@@ -66,7 +66,7 @@ __uservec:
     sd t1, 35*8(t6)
 
     # load `handler_entry` to t1 (reuse t1)
-    ld t1, 36*8(sp)
+    ld t1, 36*8(t6)
 
     # -------------------- switch page table begin ---------------------------
     
