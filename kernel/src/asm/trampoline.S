@@ -23,7 +23,7 @@
 #     pub kernel_sp: usize,         // 33 Byte: kernel stack. Stack Pointer Register
 #     pub kernel_hardid: usize,     // 34 Byte: kernel hartid (in tp)
 #     pub sepc: usize,              // 35 Byte: Return address from the kernel space to the user space
-#     pub kernel_trap: usize,        // 36 Byte: entry point of the handler in the kernel space
+#     pub trap_handler: usize,      // 36 Byte: entry point of the handler in the kernel space
 # }
 
 __uservec:
@@ -100,11 +100,16 @@ __userret:
     # we are still in supervisor mode, so we can use sscratch
     csrr a0, sscratch   # note that we restored sscratch to TRAPFRAME in usertrap
     
+    mv t6, a0   # use t6: x31 as our base pointer to the TRAPFRAME (a0 is x10!)
+    
+    # now we set the sepc registers so that on sret, pc will point to its address
+    ld a0, 35*8(t6) # since a0 is free and we haven't recovered it yet, use it as a temporary register
+    csrw sepc, a0
+
     # restore x2-x31, which includes sp: x2, tp: x4
     # Note that a process may be scheduled to another hart.
     # the old tp value stored in TrapContext::x_regs[tp] may be wrong, if not modified.
     # the caller of `userret` should update it to the current hartid of the CPU.
-    mv t6, a0   # use t6: x31 as our base pointer to the TRAPFRAME (a0 is x10!)
     .set i, 2
     .rept (30-2)+1
         LOAD_USER_REG %i, i*8(t6)
