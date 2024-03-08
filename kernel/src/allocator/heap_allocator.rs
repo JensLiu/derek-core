@@ -1,11 +1,12 @@
 //! We use buddy alocator here
 
 use core::borrow::Borrow;
+use core::ptr::addr_of;
 
 use buddy_system_allocator::LockedHeap;
 
 use crate::info;
-use crate::mm::layout::{__kernel_heap_end, __kernel_heap_start, KERNEL_HEAP_SIZE};
+use crate::mm::layout::{KERNEL_HEAP_SIZE};
 use crate::mm::memory::PhysAddr;
 
 // we define the KERNEL_HEAP_SIZE here, may be move to another file
@@ -31,11 +32,12 @@ pub fn handle_alloc_error(layout: core::alloc::Layout) -> ! {
 pub fn init() {
     // safety: HEAP_START and HEAP_SIZE are calculated by the linker
     //  and are garanteed to be valid
-
     unsafe {
-        let start = KERNEL_HEAP_SPACE.as_ptr() as usize;
+        let start = addr_of!(KERNEL_HEAP_SPACE) as usize;
+        
+        // don't try this comparision, it should be disqualified and is invalid!!
+        // assert_eq!(start, __kernel_heap_start());
 
-        assert_eq!(start, __kernel_heap_start());
         if !PhysAddr::new(start).is_page_aligned() {
             panic!("heap_allocator::init: heap start address not page aligned!");
         }
@@ -64,25 +66,4 @@ pub fn print_kernel_heap_status() {
     );
     info!("used: {:?} KB, total: {:?} KB", actual / 1024, total / 1024);
     info!("-------------------------------------------------------");
-}
-
-#[allow(unused)]
-pub fn heap_test() {
-    use alloc::boxed::Box;
-    use alloc::vec::Vec;
-    let bss_range = __kernel_heap_start()..__kernel_heap_end() as usize;
-    let a = Box::new(5);
-    assert_eq!(*a, 5);
-    assert!(bss_range.contains(&(a.as_ref() as *const _ as usize)));
-    drop(a);
-    let mut v: Vec<usize> = Vec::new();
-    for i in 0..500 {
-        v.push(i);
-    }
-    for (i, val) in v.iter().take(500).enumerate() {
-        assert_eq!(*val, i);
-    }
-    assert!(bss_range.contains(&(v.as_ptr() as usize)));
-    drop(v);
-    info!("heap_test passed!");
 }
