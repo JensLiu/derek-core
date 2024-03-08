@@ -1,5 +1,6 @@
 use crate::allocator::heap_allocator;
 use crate::arch::hart_id;
+use crate::mm::KERNEL_ADDRESS_SPACE;
 use crate::trap::usertrapret;
 use crate::uart;
 use crate::{clint, info, mm, plic, process, trap};
@@ -93,14 +94,11 @@ extern "C" fn kmain() {
         mm::hart_init(); // turn on pagning
 
         trap::init_hart();
-        plic::hart_init(); // turn
+        plic::hart_init();
     }
 
-    // for now, just do nothing...
-    // unsafe { sstatus::set_sie() }; // enable interrupt to see what happens
-    // loop {
-    //     wfi(); // RISC-V intstruction: wait for interrupt
-    //     info!("wait loop interrupt");
-    // }
+    // debug: we lock the kernel page table in case of corruption
+    KERNEL_ADDRESS_SPACE.write().lock_space();
+
     usertrapret();
 }

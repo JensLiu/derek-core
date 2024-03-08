@@ -63,6 +63,16 @@ impl AddrSpace {
     pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
         self.page_table.translate(va)
     }
+
+    /// lock the space by making the node frames of its page table in the kernel space read-only
+    pub fn lock_space(&mut self) {
+        self.page_table.lock_table();
+    }
+
+    /// lock the space by making the node frames of its page table in the kernel space writable
+    pub fn unlock_space(&mut self) {
+        self.page_table.unlock_table();
+    }
 }
 
 // Create address spaces

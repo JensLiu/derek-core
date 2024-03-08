@@ -409,6 +409,29 @@ impl PageTableGuard {
             }
         }
     }
+
+    /// lock the page table by making its node frames in the kernel space read-only
+    /// so that accidental writing to itwill be caught
+    pub fn lock_table(&self) {
+        for frame in &self.node_frames {
+            let node_pa = frame.get_frame().get_base_phys_addr();
+            let pte = self.find(VirtAddr::from_identical(node_pa)).unwrap();
+            // clear writable flag to lock the table page
+            let flags = pte.flags() & (!PTEFlags::WRITABLE);
+            *pte = PageTableEntry::new(pte.referencing_address(), flags)
+        }
+    }
+
+    /// unlock the page table by making its node frames in the kernel space writable
+    pub fn unlock_table(&self) {
+        for frame in &self.node_frames {
+            let node_pa = frame.get_frame().get_base_phys_addr();
+            let pte = self.find(VirtAddr::from_identical(node_pa)).unwrap();
+            // clear writable flag to lock the table page
+            let flags = pte.flags() | PTEFlags::WRITABLE;
+            *pte = PageTableEntry::new(pte.referencing_address(), flags)
+        }
+    }
 }
 
 pub fn test() {

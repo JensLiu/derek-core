@@ -5,10 +5,10 @@ macro_rules! linker_symbols(
         #[inline]
         pub fn $name() -> usize {
             extern "C" {
-                // TODO: UnsafeCell?
-                static $name: u8;
+                // static $name: usize;
+                static $name: ();    // this allows us to break rust rules, it's dangerous
             }
-            unsafe { &$name as *const u8 as usize }
+            unsafe { &$name as *const _ as _ }
         }
         )*
     }
@@ -16,13 +16,20 @@ macro_rules! linker_symbols(
 
 // pay close attention to the `heap` in the physical memory and the kernel heap:
 // KERNEL_HEAP is a contiguous region in the .bss section of the kernel image that stores the kernel data sturctures
-// HEAP refered here is the region (__kernel_end, PHYS_TOP]
+// HEAP referred here is the region (__kernel_end, PHYS_TOP]
+
+
+// NOTE: Any statics that may have overlapping addresses should be `extern`
+//  `static KERNEL_HEAP_SPACE` in `src/allocator/heap_allocator.rs` should NEVER share
+//  the address with `__kernel_heap_start` symbol!! That's it's invalid
+//  and causes `assert_eq(addr_of!(KERNEL_HEAP_SPACE) as usize, __kernel_heap_start() as usize)`
+//  to be invalid and being optimised out by the optimiser!!!!!!!
 linker_symbols!(
     __heap_size,
     __heap_end,
     __heap_start,
-    __kernel_heap_end,
-    __kernel_heap_start,
+    // __kernel_heap_end,
+    // __kernel_heap_start,
     __kernel_stack_end,
     __kernel_stack_start,
     __kernel_binary_end,
