@@ -104,6 +104,12 @@ bitflags! {
     }
 }
 
+impl From<PTEFlags> for PageFlags {
+    fn from(flags: PTEFlags) -> Self {
+        Self::from_bits_retain(flags.bits())
+    }
+}
+
 impl PageTableEntry {
     pub fn new(pa: PhysAddr, flags: PTEFlags) -> Self {
         Self {
@@ -210,9 +216,12 @@ impl PageTableGuard {
         frame
     }
 
-    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
+    pub fn translate(&self, va: VirtAddr) -> Option<(PhysAddr, PTEFlags)> {
         let pte = self.find(va)?;
-        Some(pte.referencing_address().with_offset(va.offset()))
+        Some((
+            pte.referencing_address().with_offset(va.offset()),
+            pte.flags(),
+        ))
     }
 
     pub fn find_allocate(&mut self, va: VirtAddr) -> &'static mut PageTableEntry {

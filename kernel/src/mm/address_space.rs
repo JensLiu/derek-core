@@ -60,8 +60,9 @@ impl AddrSpace {
         self.page_table.make_satp()
     }
 
-    pub fn translate(&self, va: VirtAddr) -> Option<PhysAddr> {
-        self.page_table.translate(va)
+    pub fn translate(&self, va: VirtAddr) -> Option<(PhysAddr, PageFlags)> {
+        let (pa, pte_flags) = self.page_table.translate(va)?;
+        Some((pa, pte_flags.into()))
     }
 
     /// lock the space by making the node frames of its page table in the kernel space read-only
@@ -254,7 +255,7 @@ impl AddrSpace {
             let va_begin = text_va_begin;
             let va_end = text_va_end;
             let pa_start = PhysAddr::new(init_text.as_ptr() as usize);
-            let perms = PageFlags::READABLE | PageFlags::EXECUTABLE;
+            let perms = PageFlags::READABLE | PageFlags::EXECUTABLE | PageFlags::USER;
 
             let mut virt_area = VirtArea::new(va_begin, va_end, perms);
             // Note: the init code is compiled into the kernel binary, so we do not own it
@@ -417,7 +418,7 @@ impl VirtArea {
     pub fn make_initial_user_stack(user_stack_va: VirtAddr) -> (Self, PhysAddr) {
         let va_begin = user_stack_va;
         let va_end = user_stack_va + PAGE_SIZE;
-        let perms = PageFlags::READABLE | PageFlags::WRITABLE;
+        let perms = PageFlags::READABLE | PageFlags::WRITABLE | PageFlags::USER;
         let mut virt_area = VirtArea::new(va_begin, va_end, perms);
 
         // We own the user stack since we explicitly called for its allocation

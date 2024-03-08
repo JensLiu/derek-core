@@ -2,11 +2,13 @@
 // hence not in this module, see `src/clint.rs` for its initialisation
 
 use riscv::register::{
-    scause::{self, Trap}, sscratch, sstatus, stvec
+    satp,
+    scause::{self, Trap},
+    sscratch, sstatus, stval, stvec,
 };
 
-use crate::mm::KERNEL_ADDRESS_SPACE;
 use crate::mm::{layout::TRAPFRAME_BASE_USER_VA, memory::VirtAddr};
+use crate::mm::{page_table::PageFlags, KERNEL_ADDRESS_SPACE};
 use crate::{
     arch, cpu, debug, info,
     mm::layout::TRAMPOLINE_BASE_VA,
@@ -16,21 +18,26 @@ use crate::{
 #[no_mangle] // we want to export it to asm
 pub fn kerneltrap() {
     let hartid = arch::hart_id();
-    if let Trap::Interrupt(intr) = scause::read().cause() {
-        match intr {
-            scause::Interrupt::SupervisorSoft => {
-                // info!("hart-{:?} kerneltrap: S-mode software", hartid);
+    match scause::read().cause() {
+        Trap::Interrupt(intr) => {
+            match intr {
+                scause::Interrupt::SupervisorSoft => {
+                    // info!("hart-{:?} kerneltrap: S-mode software", hartid);
+                }
+                scause::Interrupt::SupervisorTimer => {
+                    info!("hart-{:?} kerneltrap: S-mode timer", hartid);
+                    panic!("We use CLINT to provide software interrupt for timer! What's this???")
+                }
+                scause::Interrupt::SupervisorExternal => {
+                    info!("hart-{:?} kerneltrap: S-mode external", hartid);
+                }
+                scause::Interrupt::Unknown => {
+                    panic!("hart-{:?} kerneltrap: Unknown S-mode interrupt", hartid);
+                }
             }
-            scause::Interrupt::SupervisorTimer => {
-                info!("hart-{:?} kerneltrap: S-mode timer", hartid);
-                panic!("We use CLINT to provide software interrupt for timer! What's this???")
-            }
-            scause::Interrupt::SupervisorExternal => {
-                info!("hart-{:?} kerneltrap: S-mode external", hartid);
-            }
-            scause::Interrupt::Unknown => {
-                panic!("hart-{:?} kerneltrap: Unknown S-mode interrupt", hartid);
-            }
+        }
+        Trap::Exception(ex) => {
+            panic!("trap::kerneltrap: unexpected exception: {:?}", ex);
         }
     }
 }
@@ -56,7 +63,7 @@ pub fn usertrap() {
                 info!("Supervisor Software Interrupt");
             }
             _ => {
-                panic!("Unsupported exception");
+                panic!("Unsupported exception: {:?}", intr);
             }
         },
 
@@ -65,8 +72,41 @@ pub fn usertrap() {
                 info!("User Ecall");
                 panic!("handle ecall");
             }
+            scause::Exception::InstructionPageFault => {
+                let va = stval::read();
+                info!("Instruction Page Fault: accessing {:?}", va as *const usize);
+                // let's check if this is mapped as executable
+                let inner = pcb.inner.read();
+                let user_space = inner.get_user_space_ref_or_else_panic();
+                match user_space.translate(VirtAddr::new(va)) {
+                    Some((pa, flags)) => {
+                        info!(
+                            "va: {:?} -> pa: {:?}, flags: {:?}",
+                            va as *const usize,
+                            pa.as_usize() as *const usize,
+                            flags
+                        );
+                        if !flags.contains(PageFlags::EXECUTABLE) {
+                            panic!("trap::usertrap: it's not even executable, what are you doing???");
+                        }
+                        if !flags.contains(PageFlags::USER) {
+                            panic!("trap::usertrap: did you rememeber to set the U-bit???");
+                        }
+                    }
+                    None => {
+                        panic!("NOT MAPPED?");
+                    }
+                }
+            },
+            scause::Exception::LoadPageFault => {
+                panic!("trap::usertrap: Load Page Fault: trying to load {:?}", stval::read() as *const usize);
+            }
             _ => {
-                panic!("Unsupported exception");
+                panic!(
+                    "Unsupported exception: {:?}, stval: {:?}",
+                    ex,
+                    stval::read() as *const usize
+                );
             }
         },
     }
@@ -146,18 +186,18 @@ fn userret_on_trampoline(satp: usize) -> ! {
             // make sure that we can execute `userret` in user space
             let pcb = cpu::current_process().unwrap();
             let inner = pcb.inner.read();
-            let userret_user_translated_pa = inner
+            let (userret_user_translated_pa, _) = inner
                 .get_user_space_ref_or_else_panic()
                 .translate(VirtAddr::new(addr))
                 .unwrap();
-            let userret_kernel_translated_pa = KERNEL_ADDRESS_SPACE
+            let (userret_kernel_translated_pa, _) = KERNEL_ADDRESS_SPACE
                 .read()
                 .translate(VirtAddr::new(addr))
                 .unwrap();
             assert_eq!(userret_user_translated_pa, userret_kernel_translated_pa);
 
             // make sure that user space can execute `uservec`
-            let trampoline_user_translated_pa = inner
+            let (trampoline_user_translated_pa, _) = inner
                 .get_user_space_ref_or_else_panic()
                 .translate(VirtAddr::new(TRAMPOLINE_BASE_VA))
                 .unwrap();
