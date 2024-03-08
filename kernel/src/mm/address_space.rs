@@ -66,12 +66,20 @@ impl AddrSpace {
 
     /// lock the space by making the node frames of its page table in the kernel space read-only
     pub fn lock_space(&mut self) {
+        let another_space = Self::make_kernel();
+        another_space.load();
         self.page_table.lock_table();
+        self.load();
+        drop(another_space);
     }
 
     /// lock the space by making the node frames of its page table in the kernel space writable
     pub fn unlock_space(&mut self) {
+        let another_space = Self::make_kernel();
+        another_space.load();
         self.page_table.unlock_table();
+        self.load();
+        drop(another_space)
     }
 }
 
