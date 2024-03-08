@@ -37,10 +37,41 @@ pub fn kerneltrap() {
 
 #[no_mangle]
 pub fn usertrap() {
+    arch::intr_off();
+    unsafe {
+        // change interrupt handler to the kernel trap handler
+        stvec::write(__kernelvec as usize, stvec::TrapMode::Direct)
+    };
+
     let pcb = cpu::current_process().unwrap();
     let pid = pcb.get_pid();
     let hartid = arch::hart_id();
-    info!("trao::usertrap: core: {:?} PID: {:?}", hartid, pid);
+
+    info!("trap::usertrap: core: {:?} PID: {:?}", hartid, pid);
+
+    match scause::read().cause() {
+        Trap::Interrupt(intr) => match intr {
+            scause::Interrupt::SupervisorSoft => {
+                // TODO: schedule
+                info!("Supervisor Software Interrupt");
+            }
+            _ => {
+                panic!("Unsupported exception");
+            }
+        },
+
+        Trap::Exception(ex) => match ex {
+            scause::Exception::UserEnvCall => {
+                info!("User Ecall");
+                panic!("handle ecall");
+            }
+            _ => {
+                panic!("Unsupported exception");
+            }
+        },
+    }
+
+    usertrapret();
 }
 
 /// return from the kernel thread
@@ -84,6 +115,14 @@ pub fn usertrapret() -> ! {
             pcb.get_pid()
         );
 
+        // we test if the kernel's satp is the same as the context's kernel_satp
+        assert_eq!(
+            satp::read().bits(),
+            inner
+                .get_context_ref_or_else_panic()
+                .get_kernel_page_table()
+        );
+
         inner.get_user_space_ref_or_else_panic().make_satp()
     };
 
@@ -92,12 +131,6 @@ pub fn usertrapret() -> ! {
 
 #[inline]
 fn userret_on_trampoline(satp: usize) -> ! {
-    // NOTE: we cannot directly call __userret(satp), here's the reason
-    //  - the __userret is a linker symbol represents the physical position of the __userret function
-    //  - the user-space does not have an idential mapping to the physical memory
-    //  - the execution will fail
-    // SO WE NEED TO USE THE UNIVERSALLY MAPPED SECTION ON THE TRAMPOLINE PAGE!
-
     // we now turn the kernel interrupt off!!!
     arch::intr_off();
 
@@ -140,7 +173,11 @@ fn userret_on_trampoline(satp: usize) -> ! {
 
     let userret_virtual: extern "C" fn(usize) -> ! = unsafe { core::mem::transmute(addr) };
 
-    // if the test passes, we can jump to the address
+    // NOTE: we cannot directly call __userret(satp), here's the reason
+    //  - the __userret is a linker symbol represents the physical position of the __userret function
+    //  - the user-space does not have an idential mapping to the physical memory
+    //  - the execution will fail
+    // SO WE NEED TO USE THE UNIVERSALLY MAPPED SECTION ON THE TRAMPOLINE PAGE!
     userret_virtual(satp);
     // NOTE: when debugging, make sure to remove old breakpoints in the kernel space!
     // otherwise after the page table switch and memory fence, the debugger would not
