@@ -1,6 +1,7 @@
 use riscv::register::stvec;
+use virtio_drivers::PAGE_SIZE;
 
-use crate::symbols::__kernelvec;
+use crate::{mm::memory::{PhysAddr, VirtAddr}, symbols::__kernelvec};
 
 /// Save user-space context of a process here.
 /// We are swtiching altogether into its kernel thread.
@@ -26,20 +27,26 @@ impl TrapContext {
         self.user_regs[TP] = tp;
     }
 
-    pub fn set_trap_handler(&mut self, addr: usize) {
-        self.trap_handler = addr;
+    pub fn set_trap_handler(&mut self, addr: VirtAddr) {
+        self.trap_handler = addr.as_usize();
     }
 
-    pub fn set_user_space_execution_addr(&mut self, addr: usize) {
-        self.sepc = addr;
+    pub fn set_user_space_execution_addr(&mut self, addr: VirtAddr) {
+        self.sepc = addr.as_usize();
     }
 
-    pub fn set_user_stack(&mut self, addr: usize) {
-        self.user_regs[SP] = addr;
+    pub fn set_user_stack(&mut self, base_addr: PhysAddr) {
+        // NOTE: since the stack grows downwards, we should convert
+        // its base address to its top address
+        assert!(base_addr.is_page_aligned());
+        self.user_regs[SP] = base_addr.as_usize() + PAGE_SIZE;
     }
 
-    pub fn set_kernel_stack(&mut self, addr: usize) {
-        self.kernel_sp = addr;
+    pub fn set_kernel_stack(&mut self, base_addr: PhysAddr) {
+        // NOTE: since the stack grows downwards, we should convert
+        // its base address to its top address
+        assert!(base_addr.is_page_aligned());
+        self.kernel_sp = base_addr.as_usize() + PAGE_SIZE;
     }
 
     pub fn set_kernel_page_table(&mut self, satp: usize) {

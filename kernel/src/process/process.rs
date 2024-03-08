@@ -123,7 +123,7 @@ impl PCBInner {
 
         // test if the trapframe is mapped correctly
         {
-            let translated_trapframe_pa = uesr_space
+            let (translated_trapframe_pa, _) = uesr_space
                 .translate(VirtAddr::new(TRAPFRAME_BASE_USER_VA))
                 .unwrap();
             assert_eq!(
@@ -134,11 +134,11 @@ impl PCBInner {
 
         // initialise its execution context since it now knows the position of its kernel stack
         self.modify_trap_context(|ctx| {
-            ctx.set_kernel_stack(kernel_stack_pa.as_usize());
+            ctx.set_kernel_stack(kernel_stack_pa);
             // trap handler function: can use its physical address since it is only called
             // in the kernel address space
-            ctx.set_trap_handler(usertrap as usize);
-            ctx.set_user_space_execution_addr(TEXT_BASE_USER_VA); // pc on sret
+            ctx.set_trap_handler(VirtAddr::new(usertrap as usize));
+            ctx.set_user_space_execution_addr(VirtAddr::new(TEXT_BASE_USER_VA)); // pc on sret
 
             // set kernel page table address
             // uservec reads this value and switches page table
