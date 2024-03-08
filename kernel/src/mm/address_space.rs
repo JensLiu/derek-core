@@ -254,13 +254,13 @@ impl AddrSpace {
         virt_areas.push({
             let va_begin = text_va_begin;
             let va_end = text_va_end;
-            let pa_start = PhysAddr::new(init_text.as_ptr() as usize);
             let perms = PageFlags::READABLE | PageFlags::EXECUTABLE | PageFlags::USER;
 
             let mut virt_area = VirtArea::new(va_begin, va_end, perms);
             // Note: the init code is compiled into the kernel binary, so we do not own it
-            let phys_frame = Frame::from_phys_addr(pa_start);
-            virt_area.track_frame(va_begin, VirtFrameGuard::PhysBorrowed(phys_frame));
+            let phys_frame = FrameGuard::allocate_with_data(init_text);
+
+            virt_area.track_frame(va_begin, VirtFrameGuard::ExclusivelyAllocated(phys_frame));
             virt_area.set_name(".text");
             virt_area.print_info();
             virt_area

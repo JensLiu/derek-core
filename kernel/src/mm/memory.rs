@@ -126,6 +126,18 @@ impl Frame {
             *byte = 0;
         }
     }
+
+    pub fn write(&mut self, data: &[u8]) -> usize {
+        let total = PAGE_SIZE.min(data.len());
+        let bytes = unsafe {
+            self.get_bytes()
+        };
+        for i in 0..total {
+            let b = bytes.get_mut(i).unwrap();
+            *b = *data.get(i).unwrap();
+        }
+        total
+    }
 }
 
 impl From<PhysAddr> for Frame {
@@ -177,6 +189,12 @@ impl FrameGuard {
         let zelf = Self { inner: Some(frame) };
         // let pa = frame.get_base_phys_addr().as_usize();
         // debug!("FrameGuard::allocate_zeroed: frame at pa {:?} allocated", pa as *const usize);
+        zelf
+    }
+
+    pub fn allocate_with_data(data: &[u8]) -> Self {
+        let mut zelf = Self::allocate_zeroed();
+        zelf.inner.unwrap().write(data);
         zelf
     }
 

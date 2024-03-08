@@ -297,5 +297,7 @@ pub fn make_init() -> Arc<ProcessControlBlock> {
 /// the first user-space process but compiled into the kernel
 pub fn init_code_bytes() -> &'static [u8] {
     // compiler builtin macro
-    include_bytes!("../../../target/riscv64gc-unknown-none-elf/debug/initcode")
+    let data: &'static [u8] = include_bytes!("../../../target/riscv64gc-unknown-none-elf/debug/initcode");
+    info!("process::init_code_bytes: init code bytes are located at pa: {:?}", addr_of!(data));
+    data
 }
