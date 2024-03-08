@@ -32,7 +32,7 @@ use super::{
 #[derive(Debug)]
 pub struct AddrSpace {
     page_table: PageTableGuard,
-    virt_areas: Vec<VirtArea>,
+    virt_areas: Vec<VirtArea>, // TODO: refactor into sections???
 }
 
 impl AddrSpace {
@@ -67,23 +67,6 @@ impl AddrSpace {
 
 // Create address spaces
 impl AddrSpace {
-    // pub fn make_empty() -> Self {
-    //     let zelf = Self {
-    //         page_table: PageTableGuard::allocate(),
-    //         virt_areas: Vec::new(),
-    //     };
-    //     let pa = zelf
-    //         .page_table
-    //         .get_root_frame()
-    //         .get_base_phys_addr()
-    //         .as_usize();
-    //     debug!(
-    //         "AddrSpace::make_empty: an empty address space allocated at {:?} as a placeholder, \
-    //         it will be dropped later",
-    //         pa as *const usize
-    //     );
-    //     zelf
-    // }
     pub fn make_kernel() -> Self {
         debug!("AddrSpace::make_kernel: making address space for the kernel");
         let mut virt_areas: Vec<VirtArea> = Vec::new();
@@ -243,7 +226,7 @@ impl AddrSpace {
 
         // user stack
         virt_areas.push({
-            let area = VirtArea::make_initial_user_stack(user_stack_va);
+            let (area, _) = VirtArea::make_initial_user_stack(user_stack_va);
             area.print_info();
             area
         });
@@ -413,7 +396,7 @@ impl VirtArea {
         (virt_area, pa)
     }
 
-    pub fn make_initial_user_stack(user_stack_va: VirtAddr) -> Self {
+    pub fn make_initial_user_stack(user_stack_va: VirtAddr) -> (Self, PhysAddr) {
         let va_begin = user_stack_va;
         let va_end = user_stack_va + PAGE_SIZE;
         let perms = PageFlags::READABLE | PageFlags::WRITABLE;
@@ -421,9 +404,10 @@ impl VirtArea {
 
         // We own the user stack since we explicitly called for its allocation
         let phys_frame = FrameGuard::allocate_zeroed();
+        let pa = phys_frame.get_frame().get_base_phys_addr();
         virt_area.track_frame(va_begin, VirtFrameGuard::ExclusivelyAllocated(phys_frame));
         virt_area.set_name("user stack");
-        virt_area
+        (virt_area, pa)
     }
 
     pub fn permissions(&self) -> PageFlags {

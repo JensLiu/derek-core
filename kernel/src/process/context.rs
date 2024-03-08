@@ -45,6 +45,10 @@ impl TrapContext {
     pub fn set_kernel_page_table(&mut self, satp: usize) {
         self.kernel_satp = satp;
     }
+
+    pub fn get_kernel_page_table(&self) -> usize {
+        self.kernel_satp
+    }
 }
 
 /// set stvec to kernelvec

@@ -12,7 +12,7 @@ use crate::{
     mm::{
         address_space::AddrSpace,
         layout::TEXT_BASE_USER_VA,
-        memory::{Frame, FrameGuard, VirtFrameRange},
+        memory::{Frame, FrameGuard},
     },
     symbols::N_PROCS,
 };
@@ -52,9 +52,6 @@ pub struct PCBInner {
     // this includes the page containing `trap_context`
     user_addr_space: Option<AddrSpace>,
 
-    // user stack a growable logically contigious area in user space
-    // its resource is managed by `user_addr_space`
-    pub user_stack_virt_rng: VirtFrameRange,
     pub status: ProcStatus,
 }
 
@@ -91,37 +88,26 @@ impl PCBInner {
             }
         }
     }
-}
 
-impl ProcessControlBlock {
-    pub fn allocate() -> Self {
-        let zelf = Self {
-            pid: PIDGuard::allocate(),
-            kernel_stack: KernelStackGuard::allocate(),
-            inner: RwLock::new(PCBInner {
-                trap_context: None,
-                user_addr_space: None,
-                user_stack_virt_rng: VirtFrameRange::empty(),
-                status: ProcStatus::RUNNABLE,
-            }),
-        };
-        debug!(
-            "ProcessControlBlock::allocate: PCB for PID {:?} allocated",
-            zelf.pid.as_usize()
-        );
-        zelf
+    pub fn get_context_ref_or_else_panic(&self) -> &TrapContext {
+        let ptr = self
+            .trap_context
+            .expect("PCBInner::modify_trap_context: uninitialised trap context");
+        unsafe {
+            // safety: it is never exposed, and initialised to a valid place
+            core::mem::transmute(ptr)
+        }
     }
 
     /// Don't forget to call it!!!!
     /// It allocates page for the trapframe and set its content
-    pub fn first_execution_init(&mut self) {
+    pub fn first_execution_init(&mut self, kernel_stack_pa: PhysAddr) {
         // allocate the trapframe as a whole page
-        let mut inner = self.inner.write();
 
         // we now allocate the trapframe here
-        let trapframe_pa = inner.modify_user_space(|space| space.init_trapframe());
+        let trapframe_pa = self.modify_user_space(|space| space.init_trapframe());
 
-        inner.initialise_trap_context(|| {
+        self.initialise_trap_context(|| {
             // Safety: since it is guarenteed to be allocated by the frame allocator
             //  and managed by the user space. It should be a valid physical address.
             //  Since the kernel has an identical mapping to the physical address space,
@@ -131,7 +117,7 @@ impl ProcessControlBlock {
 
         // immutablly borrow inner, since we also mutabily borrowed inner
         // at `inner.trap_context = unsafe {...}`
-        let uesr_space = inner.get_user_space_ref_or_else_panic();
+        let uesr_space = self.get_user_space_ref_or_else_panic();
         // verify the address space (see if its content matches its page table). expensive
         uesr_space.verify();
 
@@ -147,9 +133,8 @@ impl ProcessControlBlock {
         }
 
         // initialise its execution context since it now knows the position of its kernel stack
-        let ks_pa = &self.kernel_stack.frame().get_base_phys_addr();
-        inner.modify_trap_context(|ctx| {
-            ctx.set_kernel_stack(ks_pa.as_usize());
+        self.modify_trap_context(|ctx| {
+            ctx.set_kernel_stack(kernel_stack_pa.as_usize());
             // trap handler function: can use its physical address since it is only called
             // in the kernel address space
             ctx.set_trap_handler(usertrap as usize);
@@ -160,12 +145,41 @@ impl ProcessControlBlock {
             let satp = KERNEL_ADDRESS_SPACE.read().make_satp();
             ctx.set_kernel_page_table(satp)
         });
-
         // we do not set `tp` because we do not know on which core it will be scheduled
+    }
+}
+
+impl ProcessControlBlock {
+    pub fn allocate() -> Self {
+        let zelf = Self {
+            pid: PIDGuard::allocate(),
+            kernel_stack: KernelStackGuard::allocate(),
+            inner: RwLock::new(PCBInner {
+                trap_context: None,
+                user_addr_space: None,
+                status: ProcStatus::RUNNABLE,
+            }),
+        };
+        debug!(
+            "ProcessControlBlock::allocate: PCB for PID {:?} allocated",
+            zelf.pid.as_usize()
+        );
+
+        zelf
     }
 
     pub fn get_pid(&self) -> usize {
         self.pid.as_usize()
+    }
+
+    pub fn get_kernel_stack_phys_addr(&self) -> PhysAddr {
+        self.kernel_stack.frame().get_base_phys_addr()
+    }
+
+    pub fn first_execution_init(&mut self) {
+        self.inner
+            .write()
+            .first_execution_init(self.get_kernel_stack_phys_addr());
     }
 }
 
@@ -265,14 +279,17 @@ impl Drop for PIDGuard {
 
 /// It creates PCB for the first user-space process `init`
 pub fn make_init() -> Arc<ProcessControlBlock> {
-    let mut pcb = ProcessControlBlock::allocate();
+    let pcb = ProcessControlBlock::allocate();
     let mut inner = pcb.inner.write();
 
     inner.user_addr_space = Some(AddrSpace::make_init());
-    drop(inner);
 
     // set its context
-    pcb.first_execution_init(); // requires write lock
+    inner.first_execution_init(pcb.get_kernel_stack_phys_addr());
+    // specifically drop inner, otherwise the compiler will assume we may
+    // mutabily change its content in the destructor after it's been moved to Arc::new(pcb)
+    drop(inner);
+
     assert_eq!(pcb.pid.as_usize(), 0);
     Arc::new(pcb)
 }
