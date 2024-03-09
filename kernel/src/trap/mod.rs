@@ -1,21 +1,28 @@
 // timer interrupt should be enabled in machine mode
 // hence not in this module, see `src/clint.rs` for its initialisation
 
+pub mod page_fault;
+pub mod syscall;
+
 use riscv::register::{
     satp,
     scause::{self, Trap},
     sscratch, sstatus, stval, stvec,
 };
 
-use crate::mm::{layout::TRAPFRAME_BASE_USER_VA, memory::VirtAddr};
-use crate::mm::{page_table::PageFlags, KERNEL_ADDRESS_SPACE};
 use crate::{
-    arch, cpu, debug, info,
-    mm::layout::TRAMPOLINE_BASE_VA,
+    arch, cpu, info,
+    mm::{layout::TRAMPOLINE_BASE_VA, KERNEL_ADDRESS_SPACE},
     symbols::{__kernelvec, __userret, __uservec},
 };
+use crate::{
+    mm::{layout::TRAPFRAME_BASE_USER_VA, memory::VirtAddr},
+    trap::{page_fault::InstructionPageFaultHandler, syscall::SystemCallHandler},
+};
 
-#[no_mangle] // we want to export it to asm
+// dispatchers
+
+#[no_mangle]
 pub fn kerneltrap() {
     let hartid = arch::hart_id();
     match scause::read().cause() {
@@ -50,17 +57,18 @@ pub fn usertrap() {
         stvec::write(__kernelvec as usize, stvec::TrapMode::Direct)
     };
 
-    let pcb = cpu::current_process().unwrap();
-    let pid = pcb.get_pid();
-    let hartid = arch::hart_id();
+    // let pcb = cpu::current_process().unwrap();
+    // let pid = pcb.get_pid();
+    // let hartid = arch::hart_id();
 
-    info!("trap::usertrap: core: {:?} PID: {:?}", hartid, pid);
+    // info!("trap::usertrap: core: {:?} PID: {:?}", hartid, pid);
 
     match scause::read().cause() {
         Trap::Interrupt(intr) => match intr {
             scause::Interrupt::SupervisorSoft => {
                 // TODO: schedule
                 info!("Supervisor Software Interrupt");
+                panic!();
             }
             _ => {
                 panic!("Unsupported exception: {:?}", intr);
@@ -69,37 +77,16 @@ pub fn usertrap() {
 
         Trap::Exception(ex) => match ex {
             scause::Exception::UserEnvCall => {
-                info!("User Ecall");
-                panic!("handle ecall");
+                SystemCallHandler::handle();
             }
             scause::Exception::InstructionPageFault => {
-                let va = stval::read();
-                info!("Instruction Page Fault: accessing {:?}", va as *const usize);
-                // let's check if this is mapped as executable
-                let inner = pcb.inner.read();
-                let user_space = inner.get_user_space_ref_or_else_panic();
-                match user_space.translate(VirtAddr::new(va)) {
-                    Some((pa, flags)) => {
-                        info!(
-                            "va: {:?} -> pa: {:?}, flags: {:?}",
-                            va as *const usize,
-                            pa.as_usize() as *const usize,
-                            flags
-                        );
-                        if !flags.contains(PageFlags::EXECUTABLE) {
-                            panic!("trap::usertrap: it's not even executable, what are you doing???");
-                        }
-                        if !flags.contains(PageFlags::USER) {
-                            panic!("trap::usertrap: did you rememeber to set the U-bit???");
-                        }
-                    }
-                    None => {
-                        panic!("NOT MAPPED?");
-                    }
-                }
-            },
+                InstructionPageFaultHandler::handle();
+            }
             scause::Exception::LoadPageFault => {
-                panic!("trap::usertrap: Load Page Fault: trying to load {:?}", stval::read() as *const usize);
+                panic!(
+                    "trap::usertrap: Load Page Fault: trying to load {:?}",
+                    stval::read() as *const usize
+                );
             }
             _ => {
                 panic!(
@@ -146,14 +133,15 @@ pub fn usertrapret() -> ! {
         let pcb = cpu::current_process().expect("trap::userret: No runable process");
         // we set its `tp` to the current hartid
         let mut inner = pcb.inner.write();
-        inner.modify_trap_context(|ctx| ctx.set_tp(hartid));
+        inner.write_trap_context(|ctx| ctx.set_tp(hartid));
         let inner = inner.downgrade();
+        // let context = inner.get_context_ref_or_else_panic();
 
-        debug!(
-            "trap::trapret: core: {:?}, PID: {:?}",
-            hartid,
-            pcb.get_pid()
-        );
+        // debug!(
+        //     "trap::trapret: core: {:?}, PID: {:?}",
+        //     hartid,
+        //     pcb.get_pid(),
+        // );
 
         // we test if the kernel's satp is the same as the context's kernel_satp
         assert_eq!(
@@ -205,7 +193,6 @@ fn userret_on_trampoline(satp: usize) -> ! {
                 trampoline_user_translated_pa.as_usize() as *const usize,
                 __uservec as *const usize
             );
-
         }
 
         addr
