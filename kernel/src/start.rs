@@ -1,5 +1,5 @@
 use crate::allocator::heap_allocator;
-use crate::arch::hart_id;
+use crate::arch::{hart_id, intr_off, intr_on};
 use crate::mm::KERNEL_ADDRESS_SPACE;
 use crate::trap::usertrapret;
 use crate::uart;
@@ -98,7 +98,9 @@ extern "C" fn kmain() {
     }
 
     // debug: we lock the kernel page table in case of corruption
+    intr_off();
     KERNEL_ADDRESS_SPACE.write().lock_space();
+    intr_on();
 
     usertrapret();
 }

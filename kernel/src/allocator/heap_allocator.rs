@@ -6,7 +6,7 @@ use core::ptr::addr_of;
 use buddy_system_allocator::LockedHeap;
 
 use crate::info;
-use crate::mm::layout::{KERNEL_HEAP_SIZE};
+use crate::mm::layout::KERNEL_HEAP_SIZE;
 use crate::mm::memory::PhysAddr;
 
 // we define the KERNEL_HEAP_SIZE here, may be move to another file
@@ -34,7 +34,7 @@ pub fn init() {
     //  and are garanteed to be valid
     unsafe {
         let start = addr_of!(KERNEL_HEAP_SPACE) as usize;
-        
+
         // don't try this comparision, it should be disqualified and is invalid!!
         // assert_eq!(start, __kernel_heap_start());
 

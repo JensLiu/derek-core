@@ -18,7 +18,7 @@ const ENTRY_PER_TABLE: usize = 512;
 // This is a managing instance of a page table node
 #[repr(transparent)]
 #[derive(Debug)]
-pub struct PageTableNode {
+struct PageTableNode {
     base_addr: PhysAddr,
 }
 
@@ -67,7 +67,7 @@ impl PageTableNode {
 // represents a PTE
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct PageTableEntry {
+struct PageTableEntry {
     bits: usize,
 }
 
@@ -224,7 +224,7 @@ impl PageTableGuard {
         ))
     }
 
-    pub fn find_allocate(&mut self, va: VirtAddr) -> &'static mut PageTableEntry {
+    fn find_allocate(&mut self, va: VirtAddr) -> &'static mut PageTableEntry {
         // debug!(
         //     "PageTableGuard::find_allocate: find PTE for virtaddr: {:?}",
         //     va.as_usize() as *const usize
@@ -282,7 +282,7 @@ impl PageTableGuard {
         unreachable!()
     }
 
-    pub fn find(&self, va: VirtAddr) -> Option<&'static mut PageTableEntry> {
+    fn find(&self, va: VirtAddr) -> Option<&'static mut PageTableEntry> {
         let mut table = unsafe { self.root_node.table() };
 
         for level in (0..=2).rev() {
@@ -421,6 +421,7 @@ impl PageTableGuard {
 
     /// lock the page table by making its node frames in the kernel space read-only
     /// so that accidental writing to itwill be caught
+    /// NOTE: It should be called when using another address space!!! Otherwise the order is wrong
     pub fn lock_table(&self) {
         for frame in &self.node_frames {
             let node_pa = frame.get_frame().get_base_phys_addr();

@@ -129,9 +129,7 @@ impl Frame {
 
     pub fn write(&mut self, data: &[u8]) -> usize {
         let total = PAGE_SIZE.min(data.len());
-        let bytes = unsafe {
-            self.get_bytes()
-        };
+        let bytes = unsafe { self.get_bytes() };
         for i in 0..total {
             let b = bytes.get_mut(i).unwrap();
             *b = *data.get(i).unwrap();
@@ -193,7 +191,7 @@ impl FrameGuard {
     }
 
     pub fn allocate_with_data(data: &[u8]) -> Self {
-        let mut zelf = Self::allocate_zeroed();
+        let zelf = Self::allocate_zeroed();
         zelf.inner.unwrap().write(data);
         zelf
     }

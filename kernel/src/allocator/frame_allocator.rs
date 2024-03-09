@@ -94,18 +94,18 @@ pub fn init() {
 // public interface
 pub fn allocate_one_frame() -> PhysAddr {
     let pa = FRAME_ALLOCATOR.lock().allocate(PAGE_SIZE) as usize;
-    info!(
-        "frame_allocator::allocate_one_frame: allocated frame at pa {:?}",
-        pa as *const usize
-    );
+    // info!(
+    //     "frame_allocator::allocate_one_frame: allocated frame at pa {:?}",
+    //     pa as *const usize
+    // );
     PhysAddr::new(pa)
 }
 
 pub fn deallocate_one_frame(pa: PhysAddr) {
     let pa = pa.as_usize();
-    info!(
-        "frame_allocator::deallocate_one_frame: deallocated frame at pa {:?}",
-        pa as *const usize
-    );
+    // info!(
+    //     "frame_allocator::deallocate_one_frame: deallocated frame at pa {:?}",
+    //     pa as *const usize
+    // );
     FRAME_ALLOCATOR.lock().deallocate(pa as *mut u8);
 }

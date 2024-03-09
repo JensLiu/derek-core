@@ -18,7 +18,6 @@ macro_rules! linker_symbols(
 // KERNEL_HEAP is a contiguous region in the .bss section of the kernel image that stores the kernel data sturctures
 // HEAP referred here is the region (__kernel_end, PHYS_TOP]
 
-
 // NOTE: Any statics that may have overlapping addresses should be `extern`
 //  `static KERNEL_HEAP_SPACE` in `src/allocator/heap_allocator.rs` should NEVER share
 //  the address with `__kernel_heap_start` symbol!! That's it's invalid
