@@ -1,20 +1,20 @@
-use alloc::sync::Arc;
-use lazy_static::lazy_static;
-use spin::{rwlock::RwLock, Mutex};
+use core::ptr::addr_of;
 
+use alloc::sync::Arc;
+use spin::rwlock::RwLock;
+
+use crate::info;
 use crate::mm::layout::TRAPFRAME_BASE_USER_VA;
 use crate::mm::memory::{PhysAddr, VirtAddr};
 use crate::mm::KERNEL_ADDRESS_SPACE;
 use crate::trap::usertrap;
 use crate::{
-    allocator::identifier_allocator::IdentifierAllocator,
     debug,
     mm::{
         address_space::AddrSpace,
         layout::TEXT_BASE_USER_VA,
         memory::{Frame, FrameGuard},
     },
-    symbols::N_PROCS,
 };
 
 use super::context::TrapContext;
@@ -29,7 +29,7 @@ pub enum ProcStatus {
 #[repr(C)]
 #[derive(Debug)]
 pub struct ProcessControlBlock {
-    pid: PIDGuard,
+    pub(crate) pid: usize,
     // the kernel stack is not visible to its user address space, hence it is not managed by the `user_addr_space`
     // Dropping it results in the frame for its kernel stack being recycled
     pub kernel_stack: KernelStackGuard,
@@ -52,6 +52,9 @@ pub struct PCBInner {
     // this includes the page containing `trap_context`
     user_addr_space: Option<AddrSpace>,
 
+    //
+    // children: Vec<Arc<ProcessControlBlock>>,
+    // parent: Option<Weak<ProcessControlBlock>>,
     pub status: ProcStatus,
 }
 
@@ -61,7 +64,7 @@ impl PCBInner {
         self.trap_context = Some(ctx);
     }
 
-    pub fn modify_trap_context<T>(&mut self, f: impl FnOnce(&mut TrapContext) -> T) -> T {
+    pub fn write_trap_context<T>(&mut self, f: impl FnOnce(&mut TrapContext) -> T) -> T {
         let ptr = self
             .trap_context
             .expect("PCBInner::modify_trap_context: uninitialised trap context");
@@ -72,7 +75,7 @@ impl PCBInner {
         f(ctx_ref_mut)
     }
 
-    pub fn modify_user_space<T>(&mut self, f: impl FnOnce(&mut AddrSpace) -> T) -> T {
+    pub fn write_user_space<T>(&mut self, f: impl FnOnce(&mut AddrSpace) -> T) -> T {
         let user_space_ref_mut = self
             .user_addr_space
             .as_mut()
@@ -105,7 +108,7 @@ impl PCBInner {
         // allocate the trapframe as a whole page
 
         // we now allocate the trapframe here
-        let trapframe_pa = self.modify_user_space(|space| space.init_trapframe());
+        let trapframe_pa = self.write_user_space(|space| space.init_trapframe());
 
         self.initialise_trap_context(|| {
             // Safety: since it is guarenteed to be allocated by the frame allocator
@@ -133,12 +136,12 @@ impl PCBInner {
         }
 
         // initialise its execution context since it now knows the position of its kernel stack
-        self.modify_trap_context(|ctx| {
+        self.write_trap_context(|ctx| {
             ctx.set_kernel_stack(kernel_stack_pa);
             // trap handler function: can use its physical address since it is only called
             // in the kernel address space
             ctx.set_trap_handler(VirtAddr::new(usertrap as usize));
-            ctx.set_user_space_execution_addr(VirtAddr::new(TEXT_BASE_USER_VA)); // pc on sret
+            ctx.set_user_space_pc(VirtAddr::new(TEXT_BASE_USER_VA)); // pc on sret
 
             // set kernel page table address
             // uservec reads this value and switches page table
@@ -150,9 +153,9 @@ impl PCBInner {
 }
 
 impl ProcessControlBlock {
-    pub fn allocate() -> Self {
+    pub fn allocate(pid: usize) -> Self {
         let zelf = Self {
-            pid: PIDGuard::allocate(),
+            pid,
             kernel_stack: KernelStackGuard::allocate(),
             inner: RwLock::new(PCBInner {
                 trap_context: None,
@@ -162,14 +165,14 @@ impl ProcessControlBlock {
         };
         debug!(
             "ProcessControlBlock::allocate: PCB for PID {:?} allocated",
-            zelf.pid.as_usize()
+            zelf.pid
         );
 
         zelf
     }
 
     pub fn get_pid(&self) -> usize {
-        self.pid.as_usize()
+        self.pid
     }
 
     pub fn get_kernel_stack_phys_addr(&self) -> PhysAddr {
@@ -187,7 +190,7 @@ impl Drop for ProcessControlBlock {
     fn drop(&mut self) {
         debug!(
             "ProcessControlBlock::drop: PCB for PID {:?} deallocated",
-            self.pid.as_usize()
+            self
         );
     }
 }
@@ -232,54 +235,9 @@ impl Drop for KernelStackGuard {
     }
 }
 
-// PID allocator
-lazy_static! {
-    static ref PID_ALLOCATOR: Mutex<IdentifierAllocator> =
-        Mutex::new(IdentifierAllocator::new(N_PROCS));
-}
-
-#[repr(transparent)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct PIDGuard {
-    id: usize,
-}
-
-impl PIDGuard {
-    pub fn allocate() -> Self {
-        let zelf = Self {
-            id: PID_ALLOCATOR.lock().allocate(),
-        };
-        debug!("PIDGuard::allocate: PID {:?} allocated", zelf.id);
-        zelf
-    }
-
-    pub fn as_usize(&self) -> usize {
-        self.id
-    }
-}
-
-impl PartialEq<usize> for PIDGuard {
-    fn eq(&self, other: &usize) -> bool {
-        self.id == *other
-    }
-}
-
-impl PartialOrd<usize> for PIDGuard {
-    fn partial_cmp(&self, other: &usize) -> Option<core::cmp::Ordering> {
-        Some(self.id.cmp(other))
-    }
-}
-
-impl Drop for PIDGuard {
-    fn drop(&mut self) {
-        PID_ALLOCATOR.lock().deallocate(self.id);
-        debug!("PIDGuard::drop: PID {:?} dropped", self.id);
-    }
-}
-
 /// It creates PCB for the first user-space process `init`
-pub fn make_init() -> Arc<ProcessControlBlock> {
-    let pcb = ProcessControlBlock::allocate();
+pub fn make_initcode_uninitialised(pid: usize) -> Arc<ProcessControlBlock> {
+    let pcb = ProcessControlBlock::allocate(pid);
     let mut inner = pcb.inner.write();
 
     inner.user_addr_space = Some(AddrSpace::make_init());
@@ -290,14 +248,18 @@ pub fn make_init() -> Arc<ProcessControlBlock> {
     // mutabily change its content in the destructor after it's been moved to Arc::new(pcb)
     drop(inner);
 
-    assert_eq!(pcb.pid.as_usize(), 0);
+    assert_eq!(pcb.pid, 0);
     Arc::new(pcb)
 }
 
 /// the first user-space process but compiled into the kernel
 pub fn init_code_bytes() -> &'static [u8] {
     // compiler builtin macro
-    let data: &'static [u8] = include_bytes!("../../../target/riscv64gc-unknown-none-elf/debug/initcode");
-    info!("process::init_code_bytes: init code bytes are located at pa: {:?}", addr_of!(data));
+    let data: &'static [u8] =
+        include_bytes!("../../../target/riscv64gc-unknown-none-elf/debug/initcode");
+    info!(
+        "process::init_code_bytes: init code bytes are located at pa: {:?}",
+        addr_of!(data)
+    );
     data
 }

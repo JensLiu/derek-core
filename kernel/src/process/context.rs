@@ -1,7 +1,11 @@
 use riscv::register::stvec;
 use virtio_drivers::PAGE_SIZE;
 
-use crate::{mm::memory::{PhysAddr, VirtAddr}, symbols::__kernelvec};
+use crate::{
+    mm::memory::{PhysAddr, VirtAddr},
+    symbols::__kernelvec,
+    trap::syscall::Syscall,
+};
 
 /// Save user-space context of a process here.
 /// We are swtiching altogether into its kernel thread.
@@ -21,6 +25,7 @@ pub struct TrapContext {
 
 const TP: usize = 4;
 const SP: usize = 2;
+const A0: usize = 10;
 
 impl TrapContext {
     pub fn set_tp(&mut self, tp: usize) {
@@ -31,8 +36,16 @@ impl TrapContext {
         self.trap_handler = addr.as_usize();
     }
 
-    pub fn set_user_space_execution_addr(&mut self, addr: VirtAddr) {
+    pub fn set_user_space_pc(&mut self, addr: VirtAddr) {
         self.sepc = addr.as_usize();
+    }
+
+    pub fn get_user_space_pc(&mut self, addr: VirtAddr) {
+        self.sepc = addr.as_usize();
+    }
+
+    pub fn incr_user_space_pc(&mut self, diff: usize) {
+        self.sepc += diff;
     }
 
     pub fn set_user_stack(&mut self, base_addr: PhysAddr) {
@@ -55,6 +68,18 @@ impl TrapContext {
 
     pub fn get_kernel_page_table(&self) -> usize {
         self.kernel_satp
+    }
+
+    pub fn get_arg(&self, idx: usize) -> usize {
+        if idx <= 7 {
+            self.user_regs[A0 + idx]
+        } else {
+            panic!("TrapContext::get_arg: arg {:?}: out of bounds", idx);
+        }
+    }
+
+    pub fn get_syscall(&self) -> Option<Syscall> {
+        Syscall::from(self.get_arg(7))
     }
 }
 
