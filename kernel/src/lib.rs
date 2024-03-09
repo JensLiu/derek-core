@@ -22,6 +22,7 @@ pub mod start;
 pub mod symbols;
 pub mod trap;
 pub mod uart;
+pub mod common;
 
 #[no_mangle]
 extern "C" fn eh_personality() {}

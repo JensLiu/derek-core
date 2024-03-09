@@ -1,6 +1,5 @@
 pub mod frame_allocator;
 pub mod heap_allocator;
-pub mod resource_manager;
 
 pub fn init() {
     // we should first init the heap allocator

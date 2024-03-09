@@ -236,7 +236,7 @@ impl Drop for KernelStackGuard {
 }
 
 /// It creates PCB for the first user-space process `init`
-pub fn make_initcode_uninitialised(pid: usize) -> Arc<ProcessControlBlock> {
+pub fn make_initcode_uninitialised(pid: usize) -> ProcessControlBlock {
     let pcb = ProcessControlBlock::allocate(pid);
     let mut inner = pcb.inner.write();
 
@@ -249,7 +249,7 @@ pub fn make_initcode_uninitialised(pid: usize) -> Arc<ProcessControlBlock> {
     drop(inner);
 
     assert_eq!(pcb.pid, 0);
-    Arc::new(pcb)
+    pcb
 }
 
 /// the first user-space process but compiled into the kernel
